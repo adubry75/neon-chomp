@@ -27,6 +27,8 @@ export interface HudInfo {
   showControlsHint?: boolean;
   /** Intro card is waiting for a key press. */
   introHold?: boolean;
+  /** Boss stage info for the intro card and health bar. */
+  boss?: { name: string; rules: string[]; color: string };
 }
 
 export class Renderer {
@@ -179,12 +181,13 @@ export class Renderer {
       case 'bossHit':
         this.burst(x, y, '#ff2d55', 60, 14, 'spark', 0.9, 4); this.ring(x, y, '#fff', 6, 0.5);
         this.popup(x, y - 2, 'HIT! ' + e.v, '#fff', 16, 1.3); this.addShake(14); this.flash = 0.3; this.flashColor = '#fff';
+        if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST HIT!' : `${e.s} HITS LEFT!`, '#ffe600', 22, 1.8);
         break;
       case 'bossDown':
         for (let i = 0; i < 5; i++) this.burst(x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, ['#ff2d55', '#ffd23d', '#5ce1ff', '#b45cff', '#fff'][i], 40, 14, 'star', 1.4, 5);
         this.popup(x, y - 2, 'BOSS DOWN!', '#ffd23d', 22, 2.2); this.addShake(20); this.flash = 0.5; this.flashColor = '#fff';
         break;
-      case 'core': this.ring(x, y, '#e0b0ff', 10, 0.8); this.burst(x, y, '#e0b0ff', 40, 11, 'star', 1, 4); this.popup(x, y - 1, 'CORE! ' + e.v, '#e0b0ff', 13); this.addShake(10); this.flash = 0.3; this.flashColor = '#b45cff'; break;
+      case 'core': this.ring(x, y, '#e0b0ff', 10, 0.8); this.burst(x, y, '#e0b0ff', 40, 11, 'star', 1, 4); this.popup(x, y - 1, 'CORE! ' + e.v, '#e0b0ff', 13); if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST CORE!' : `${e.s} CORES LEFT!`, '#ffe600', 20, 1.8); this.addShake(10); this.flash = 0.3; this.flashColor = '#b45cff'; break;
       case 'coreSpawn': this.ring(x, y, '#e0b0ff', 4, 0.8); break;
       case 'clear': this.mazeFlash = 2.2; break;
       case 'teleport': this.burst(x, y, `hsl(${e.v},100%,65%)`, 14, 6, 'spark', 0.35); if (e.x2 !== undefined) this.burst(e.x2, e.y2!, `hsl(${e.v},100%,65%)`, 14, 6, 'spark', 0.35); break;
@@ -649,6 +652,7 @@ export class Renderer {
   /** Stage intro card, held on screen until the player presses a key. */
   private drawIntroCard(w: World, hud: HudInfo) {
     const c = this.ctx;
+    if (hud.boss) { this.drawBossCard(hud.boss); return; }
     const mods = w.cfg.modifiers;
     const y0 = 4.4 * T, h = T * 5.2 + mods.length * T * 0.75;
     panel(c, 56, y0, VW - 112, h, hud.wallColor);
@@ -660,6 +664,43 @@ export class Renderer {
     });
     const blink = Math.floor(this.time * 2.5) % 2 === 0;
     text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.8 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
+  }
+
+  private drawBossCard(boss: NonNullable<HudInfo['boss']>) {
+    const c = this.ctx;
+    const y0 = 3.6 * T, h = 9 * T;
+    panel(c, 40, y0, VW - 80, h, boss.color, 'rgba(20,0,10,0.94)', 3);
+    const warn = Math.floor(this.time * 4) % 2 === 0;
+    text(c, '⚠  BOSS  ⚠', VW / 2, y0 + 1.1 * T, 13, warn ? '#ff2d55' : '#7a1020', 'center', warn ? 12 : 0);
+    text(c, boss.name, VW / 2, y0 + 2.9 * T, 20, boss.color, 'center', 16);
+    boss.rules.forEach((line, i) => text(c, line, VW / 2, y0 + 4.7 * T + i * T * 1.05, 9, '#fff', 'center', 4));
+    const blink = Math.floor(this.time * 2.5) % 2 === 0;
+    text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.9 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
+  }
+
+  /** Big segmented health bar across the top of the maze on boss stages. */
+  private drawBossBar(w: World, hud: HudInfo) {
+    const boss = hud.boss;
+    if (!boss) return;
+    let label = boss.name, segs = 0, left = 0;
+    if (w.cfg.boss === 'mega' && w.mega) { segs = w.mega.maxHp; left = Math.max(0, w.mega.hp); }
+    else if (w.cfg.boss === 'train') {
+      segs = 12; left = w.cars.filter(c => c.alive).length;
+      if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
+    } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }
+    if (!segs) return;
+    const c = this.ctx;
+    const bw = VW * 0.5, x0 = (VW - bw) / 2, y = 2.5 * T, gap = 3;
+    const sw = (bw - gap * (segs - 1)) / segs;
+    text(c, label, x0 - 8, y + 4, 6, boss.color, 'right', 4);
+    for (let i = 0; i < segs; i++) {
+      const on = i < left;
+      c.save();
+      c.fillStyle = on ? boss.color : hexA(boss.color, 0.15);
+      if (on) { c.shadowColor = boss.color; c.shadowBlur = 8; }
+      c.fillRect(x0 + i * (sw + gap), y, sw, 7);
+      c.restore();
+    }
   }
 
   private drawHud(w: World, hud: HudInfo) {
@@ -729,9 +770,7 @@ export class Renderer {
     if (hud.mode === 'run') {
       const mods = w.cfg.modifiers;
       mods.forEach((id, i) => text(c, MODIFIERS[id].name, VW / 2, VH - 1.55 * T + i * 11, 6, MODIFIERS[id].color, 'center', 0));
-      if (w.cfg.boss === 'eater') text(c, `CORES LEFT: ${w.coresLeft}`, VW / 2, by + 6, 8, '#e0b0ff', 'center', 6);
-      if (w.cfg.boss === 'train') text(c, `CARS LEFT: ${w.cars.filter(c => c.alive).length}`, VW / 2, by + 6, 8, '#ffd23d', 'center', 6);
-      if (w.cfg.boss === 'mega' && w.mega) text(c, `MEGA BLINKY HP ${w.mega.hp}/${w.mega.maxHp}`, VW / 2, by + 6, 8, '#ff2d55', 'center', 6);
+      this.drawBossBar(w, hud);
     }
   }
 }

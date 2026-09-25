@@ -17,10 +17,10 @@ export interface StagePlan {
   mazeSeed: number | 'classic';
 }
 
-export const BOSS_INFO: Record<BossId, { name: string; sub: string; color: string }> = {
-  mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', color: '#ff2d55' },
-  train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', color: '#ffd23d' },
-  eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', color: '#b45cff' },
+export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: string[]; color: string }> = {
+  mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', rules: ['EAT A POWER PELLET, THEN CHOMP HIM.', '4 HITS TO WIN. PELLETS RESPAWN.'], color: '#ff2d55' },
+  train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', rules: ['POWER UP AND EAT ALL 12 TRAIN CARS,', 'THEN CHOMP THE KING.'], color: '#ffd23d' },
+  eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', rules: ['OUTRUN THE RISING VOID.', 'EAT 3 CORES TO PUSH IT BACK.'], color: '#b45cff' },
 };
 
 export const ACTS = ['ACT I · NEON DISTRICT', 'ACT II · GHOST RAILS', 'ACT III · THE GLITCH'];

@@ -296,6 +296,7 @@ class Game {
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
         playerNames: [], showControlsHint: this.run.stage === 0 && w.deathsThisStage === 0,
         introHold: this.introHold,
+        boss: boss ? { name: boss.name, rules: boss.rules, color: boss.color } : undefined,
       };
     }
     return {
