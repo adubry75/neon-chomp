@@ -7,3 +7,7 @@
 - **Ghost Squad fog-of-war** is skipped, because every player shares one screen.
 - **Procedural mazes:** the left half is built as a lattice graph (spanning tree + loops + dead-end repair), then mirrored. It is validated for symmetry, connectivity, no dead ends and 1-wide corridors (tested on 1000 seeds).
 - **Hit-stop** freezes the whole sim briefly on big events (ghost eats, boss hits), so it is part of the deterministic simulation, not just a visual effect.
+- **Ice (reworked after playtest):** a new turn only takes effect after Pac slides `ICE_SLIDE` (0.5) tiles, so pressing early still makes every corridor reachable. Reversing is instant. The original "skip the first junction" version made some generated corridors nearly unreachable.
+- **Press-any-key stage intro:** the intro card (and the boss rules card) stays up until a key is pressed, and the world doesn't tick meanwhile. Respawns after a death go straight to READY.
+- **Act cutscenes:** an opening gag before Act I (Pac naps, gets bonked by a pellet, chomps a trail and scares off the ghosts), an act title card before each act, plus arcade-style gags between acts (I→II Blinky chase / giant Pac; II→III ghost train, then the glitch) and an ending gag. All are skippable.
+- **Cheat console** (backtick) is always available since this is a personal project. A run where any cheat succeeds is marked cheated and never updates the save (best, souls, wins, bosses).

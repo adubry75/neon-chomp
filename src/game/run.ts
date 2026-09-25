@@ -17,15 +17,25 @@ export interface StagePlan {
   mazeSeed: number | 'classic';
 }
 
-export const BOSS_INFO: Record<BossId, { name: string; sub: string; color: string }> = {
-  mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', color: '#ff2d55' },
-  train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', color: '#ffd23d' },
-  eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', color: '#b45cff' },
+export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: string[]; color: string }> = {
+  mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', rules: ['EAT A POWER PELLET, THEN CHOMP HIM.', '4 HITS TO WIN. PELLETS RESPAWN.'], color: '#ff2d55' },
+  train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', rules: ['POWER UP AND EAT ALL 12 TRAIN CARS,', 'THEN CHOMP THE KING.'], color: '#ffd23d' },
+  eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', rules: ['OUTRUN THE RISING VOID.', 'EAT 3 CORES TO PUSH IT BACK.'], color: '#b45cff' },
 };
 
 export const ACTS = ['ACT I · NEON DISTRICT', 'ACT II · GHOST RAILS', 'ACT III · THE GLITCH'];
+export const ACT_COLORS = ['#2d7bff', '#ff2df0', '#39ffb4'];
 export const STAGES_PER_ACT = 5;
 export const TOTAL_STAGES = 15;
+
+export type Pip = 'done' | 'current' | 'todo' | 'boss' | 'bossCurrent';
+
+/** Progress markers for the act containing `stage` (the last one is always the boss). */
+export function actPips(stage: number): Pip[] {
+  const idx = stage % STAGES_PER_ACT;
+  return Array.from({ length: STAGES_PER_ACT }, (_, i): Pip =>
+    i === STAGES_PER_ACT - 1 ? (i === idx ? 'bossCurrent' : 'boss') : i < idx ? 'done' : i === idx ? 'current' : 'todo');
+}
 
 export class Run {
   seed: number;
@@ -47,6 +57,8 @@ export class Run {
   rerolls = 0;
   livesBought = 0;
   won = false;
+  /** A cheat was used: results aren't saved to the meta progress. */
+  cheated = false;
   offers: UpgradeDef[] = [];
 
   constructor(seed: number, players: PlayerInfo[], meta: MetaSave) {

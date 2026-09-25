@@ -7,7 +7,7 @@ import { levelParams, type LevelParams } from '../data/levels';
 import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
 import type { Dozer, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
-import { setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
+import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
 export type BossId = 'mega' | 'train' | 'eater';
@@ -95,6 +95,8 @@ export class World {
   voidSpeed = 0.42;
   coresLeft = 0;
   bossDefeated = false;
+  /** Cheat: main pacs can't be hurt. */
+  god = false;
   private idGen = 1;
   private tpCool = new WeakMap<object, number>();
 
@@ -137,7 +139,7 @@ export class World {
     return {
       id: this.idGen++, player, kind, x: this.maze.pacStart.x, y: this.maze.pacStart.y, dir: LEFT, desired: NONE,
       state: 'alive', stateT: 0, color, mouth: 0, moving: false, powerT: 0, invulnT: 0, fx: {},
-      dashCharges: 0, dashT: 0, peelT: 0, iceHold: NONE, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
+      dashCharges: 0, dashT: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
     };
   }
 
@@ -215,7 +217,7 @@ export class World {
       } else {
         const s = this.safeSpawn(); p.x = s.x; p.y = s.y; p.dir = i % 2 ? RIGHT : LEFT;
       }
-      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceHold = NONE;
+      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
       p.invulnT = initial ? 0 : 1.2; p.trail = [];
     });
     const stagger = [0, 1.5, 4, 6.5, 9];
@@ -442,9 +444,12 @@ export class World {
 
     const ice = this.has('ice') && p.kind !== 'mini';
     if (p.kind !== 'mini') {
-      if (p.desired !== NONE && p.desired === opposite(p.dir)) { p.dir = p.desired; p.iceHold = NONE; }
+      if (p.desired !== NONE && p.desired === opposite(p.dir)) { p.dir = p.desired; p.iceDir = NONE; p.iceSlide = 0; }
       else if (!ice) tryCorner(p, p.desired, m);
+      else if (p.desired !== NONE && p.desired !== p.dir && p.desired !== p.iceDir) { p.iceDir = p.desired; p.iceSlide = ICE_SLIDE; }
     }
+    const stepDist = this.pacSpeed(p) * TICK;
+    if (ice) p.iceSlide = Math.max(0, p.iceSlide - stepDist);
 
     const ox = p.x, oy = p.y;
     const decide = (mv: { x: number; y: number; dir: Dir }): Dir => {
@@ -453,14 +458,12 @@ export class World {
       const want = p.desired;
       const canWant = want !== NONE && m.canGo(tx, ty, want, 'pac');
       const canStraight = mv.dir !== NONE && m.canGo(tx, ty, mv.dir, 'pac');
-      if (ice && canWant && want !== mv.dir && canStraight) {
-        if (p.iceHold !== want) { p.iceHold = want; return mv.dir; }
-      }
-      if (canWant) { p.iceHold = NONE; return want; }
+      if (ice && canWant && want !== mv.dir && canStraight && p.iceSlide > 0) return mv.dir;
+      if (canWant) { p.iceDir = NONE; return want; }
       if (canStraight) return mv.dir;
       return NONE;
     };
-    advance(p, this.pacSpeed(p) * TICK, m.w, decide, mv => this.onCenter(mv as Pac, true));
+    advance(p, stepDist, m.w, decide, mv => this.onCenter(mv as Pac, true));
     const moved = Math.abs(p.x - ox) + Math.abs(p.y - oy) > 1e-6;
     p.moving = moved;
     if (moved) p.mouth += TICK * 14;
@@ -992,6 +995,7 @@ export class World {
   hurtPac(p: Pac, byHuman: number) {
     if (p.kind === 'clone') { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: p.color }); return; }
     if (p.kind === 'mini') return;
+    if (this.god && p.kind === 'main') return;
     const mode = this.cfg.mode;
     if (mode === 'run' && this.shieldsLeft > 0) {
       this.shieldsLeft--; p.invulnT = 2;
@@ -1181,6 +1185,35 @@ export class World {
     this.voidSpeed += 0.08;
     if (this.coresLeft <= 0) this.bossDown(x, y);
     else this.placeCore();
+  }
+
+  // ───────────────────────────── cheat console hooks ─────────────────────────────
+
+  cheatPower() { const p = this.mainPacs[0]; if (p) this.power(p); }
+
+  /** Finish the stage: beat the boss, or eat every pellet. */
+  cheatWin() {
+    if (this.cfg.boss) {
+      if (this.bossDefeated) return;
+      const p = this.mainPacs[0];
+      this.bossDown(p?.x ?? 14, p?.y ?? 14);
+      return;
+    }
+    const m = this.maze;
+    for (let i = 0; i < m.items.length; i++) if (m.items[i] === I_PELLET || m.items[i] === I_POWER) m.items[i] = I_NONE;
+    m.pelletsLeft = 0;
+  }
+
+  /** Set the boss's remaining health (hits, cars or cores). False when there's no boss. */
+  cheatBossHp(n: number): boolean {
+    if (this.mega) { this.mega.hp = Math.max(1, Math.min(this.mega.maxHp, n)); return true; }
+    if (this.cfg.boss === 'train') {
+      let keep = Math.max(0, n);
+      for (const c of this.cars) if (c.alive) { if (keep > 0) keep--; else c.alive = false; }
+      return true;
+    }
+    if (this.cfg.boss === 'eater') { this.coresLeft = Math.max(1, Math.min(3, n)); return true; }
+    return false;
   }
 
   private bossDown(x: number, y: number) {

@@ -3,7 +3,10 @@ import { T, drawFruit, drawGhost, drawPac, panel, text, wrapText } from './rende
 import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
-import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT } from './game/run';
+import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
+import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
+import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
+import { runCheat } from './game/cheats';
 import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
@@ -12,11 +15,10 @@ import { generateMaze } from './sim/mazegen';
 import { defaultMods } from './sim/mods';
 import { DOWN, LEFT, NONE, RIGHT, TICK, UP, type Dir } from './sim/types';
 
-type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus';
+type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene';
 type LobbyMode = 'coop' | 'royale' | 'squad';
 
 const PLAYER_COLORS = ['#ffe600', '#5cff8a', '#ff5cf0', '#f4f4ff'];
-const ACT_COLORS = ['#2d7bff', '#ff2df0', '#39ffb4'];
 const DEVICES: DeviceId[] = ['kbL', 'kbR', 'pad0', 'pad1', 'pad2', 'pad3'];
 const DEVICE_LABEL: Record<DeviceId, string> = { kb: 'KEYBOARD', kbL: 'WASD + SPACE', kbR: 'ARROWS + ENTER', pad0: 'GAMEPAD 1', pad1: 'GAMEPAD 2', pad2: 'GAMEPAD 3', pad3: 'GAMEPAD 4' };
 
@@ -41,16 +43,26 @@ class Game {
   squadRound = 0;
   squadTotals: Record<number, number> = {};
   lastRound: { title: string; lines: [string, string][] } | null = null;
-  resultInfo: { won: boolean; souls: number; newBest: boolean } | null = null;
+  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean } | null = null;
   toast = '';
   toastT = 0;
   sceneT = 0;
   standMsg = '';
+  /** Stage intro card is up; the world doesn't tick until a key is pressed. */
+  introHold = false;
+  /** Fruit Stand: full-screen owned-upgrades overlay is open. */
+  standOverlay = false;
+  /** Backtick cheat console. */
+  cheat = { open: false, text: '', log: [] as string[] };
+  slowmo = false;
+  cutQueue: CutsceneId[] = [];
+  cutThen: (() => void) | null = null;
 
   constructor() {
     this.applySettings();
     this.input.onFirstGesture = () => { this.audio.init(); this.audio.play(this.trackFor()); };
     (window as unknown as { __game: Game }).__game = this;
+    window.addEventListener('keydown', e => this.consoleKey(e));
     const q = new URLSearchParams(location.search);
     if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0);
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
@@ -69,7 +81,7 @@ class Game {
   trackFor() {
     switch (this.scene) {
       case 'title': case 'meta': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
-      case 'stand': return 'stand';
+      case 'stand': case 'cutscene': return 'stand';
       case 'pause': return 'none';
       case 'play': return this.world?.cfg.boss ? 'boss' : 'play';
     }
@@ -97,11 +109,13 @@ class Game {
       case 'settings': this.settingsScene(); break;
       case 'help': this.help(); break;
       case 'versus': this.versusResults(); break;
+      case 'cutscene': this.cutscene(dt); break;
     }
     if (this.toastT > 0) {
       this.toastT -= dt;
       text(this.r.ctx, this.toast, VW / 2, VH - 14, 9, '#fff', 'center', 6);
     }
+    if (this.cheat.open) this.drawConsole();
     this.r.post();
     this.input.endFrame();
     requestAnimationFrame(t => this.frame(t));
@@ -228,13 +242,42 @@ class Game {
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
     this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta);
     this.run.stage = stage;
+    this.world = null;
     this.meta.runs++; saveMeta(this.meta);
-    this.startStage();
+    if (stage === 0) this.playCutscenes(['intro', 'title0'], () => this.startStage());
+    else this.startStage();
+  }
+
+  /** Start the run's current stage, with the intermission + title card first when a new act begins. */
+  nextStage() {
+    const p = this.run!.current;
+    if (p.index === 0 && this.run!.stage > 0) this.playCutscenes([`gag${p.act}` as CutsceneId, `title${p.act}` as CutsceneId], () => this.startStage());
+    else this.startStage();
+  }
+
+  playCutscenes(ids: CutsceneId[], then: () => void) {
+    this.cutQueue = [...ids];
+    this.cutThen = then;
+    this.go('cutscene');
+  }
+
+  cutscene(dt: number) {
+    this.r.time += dt;
+    const id = this.cutQueue[0];
+    if (id) drawCutscene(this.r.ctx, id, this.sceneT);
+    const skip = this.sceneT > 0.3 && this.input.anyPressed();
+    if (id && this.sceneT < CUTSCENE_LEN[id] && !skip) return;
+    this.cutQueue.shift();
+    this.sceneT = 0;
+    if (!this.cutQueue.length) { const then = this.cutThen; this.cutThen = null; then?.(); }
   }
 
   startStage() {
+    const god = this.world?.god ?? false; // cheat survives stage changes within a run
     this.world = this.run!.makeWorld();
+    this.world.god = god;
     this.r.particles = []; this.r.popups = [];
+    this.introHold = true;
     this.go('play');
   }
 
@@ -246,6 +289,7 @@ class Game {
       mode: 'royale', maze: generateMaze(seed), level: 3, mods: defaultMods(), modifiers: [], boss: null,
       players: infos, seed, fruitPool: FRUIT_IDS.filter(f => f !== 'key'), lives: 3, scoreBase: 0, royaleTime: 150,
     });
+    this.introHold = true;
     this.go('play');
   }
 
@@ -261,6 +305,7 @@ class Game {
       fruitPool: ['cherry', 'orange', 'apple', 'melon', 'bell', 'pineapple', 'banana'], lives: 2, scoreBase: 0,
       squadPac: pac.slot, ghostPlayers: ghostsP,
     });
+    this.introHold = true;
     this.go('play');
   }
 
@@ -285,11 +330,13 @@ class Game {
       const boss = p.boss ? BOSS_INFO[p.boss] : null;
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
-        stageLabel: `${['I', 'II', 'III'][p.act]}-${p.index + 1}`,
+        stageLabel: `ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
         wallColor: boss ? boss.color : ACT_COLORS[p.act],
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
         playerNames: [], showControlsHint: this.run.stage === 0 && w.deathsThisStage === 0,
+        introHold: this.introHold,
+        boss: boss ? { name: boss.name, rules: boss.rules, color: boss.color } : undefined,
       };
     }
     return {
@@ -297,14 +344,21 @@ class Game {
       bannerTitle: this.mode === 'royale' ? 'CHOMP ROYALE' : `GHOST SQUAD · ROUND ${this.squadRound + 1}`,
       bannerSub: this.mode === 'royale' ? 'POWER UP, THEN EAT YOUR FRIENDS' : `P${(w.cfg.squadPac ?? 0) + 1} IS PAC. GHOSTS: CATCH THEM!`,
       playerNames: [], squadGhostScores: this.mode === 'squad' ? this.squadTotals : undefined,
+      introHold: this.introHold,
     };
   }
 
   play(dt: number) {
     const w = this.world!;
+    if (this.cheat.open) { this.r.drawWorld(w, this.hudInfo(), 0); return; }
     if (this.input.pause()) { this.audio.ui('back'); this.scene = 'pause'; this.cursor = 0; this.audio.play('none'); this.audio.sirenOn = false; return; }
+    if (this.introHold) {
+      this.r.drawWorld(w, this.hudInfo(), dt);
+      if (this.sceneT > 0.25 && this.input.anyPressed()) { this.introHold = false; this.acc = 0; this.audio.ui('select'); }
+      return;
+    }
     for (const p of this.players) w.setInput(p.slot, this.deviceDir(p), this.deviceAct(p));
-    this.acc += dt;
+    this.acc += this.slowmo ? dt / 2 : dt;
     let steps = 0;
     while (this.acc >= TICK && steps < 6) {
       w.update();
@@ -329,7 +383,7 @@ class Game {
       const run = this.run!;
       run.absorb(w);
       if (w.done === 'clear') {
-        if (!run.advance()) { this.endRun(true); return; }
+        if (!run.advance()) { this.playCutscenes(['ending'], () => this.endRun(true)); return; }
         run.rollOffers();
         this.standMsg = '';
         this.go('stand');
@@ -360,15 +414,65 @@ class Game {
   endRun(won: boolean) {
     const run = this.run!;
     run.won = won;
-    const souls = soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
-    const newBest = run.score > this.meta.best;
-    this.meta.souls += souls;
-    this.meta.best = Math.max(this.meta.best, run.score);
-    this.meta.bossesBeaten += run.bossesBeaten;
-    if (won) this.meta.wins++;
-    saveMeta(this.meta);
-    this.resultInfo = { won, souls, newBest };
+    // cheated runs never touch the save
+    const souls = run.cheated ? 0 : soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
+    const newBest = !run.cheated && run.score > this.meta.best;
+    if (!run.cheated) {
+      this.meta.souls += souls;
+      this.meta.best = Math.max(this.meta.best, run.score);
+      this.meta.bossesBeaten += run.bossesBeaten;
+      if (won) this.meta.wins++;
+      saveMeta(this.meta);
+    }
+    this.resultInfo = { won, souls, newBest, cheated: run.cheated };
     this.go('results');
+  }
+
+  // ───────────────────────── cheat console ─────────────────────────
+
+  consoleKey(e: KeyboardEvent) {
+    const con = this.cheat;
+    if (e.code === 'Backquote') {
+      e.preventDefault();
+      con.open = !con.open; con.text = '';
+      this.input.suspended = con.open;
+      if (con.open && !con.log.length) con.log.push('TYPE HELP FOR CODES. ` OR ESC TO CLOSE.');
+      return;
+    }
+    if (!con.open) return;
+    e.preventDefault();
+    if (e.key === 'Escape') { con.open = false; this.input.suspended = false; }
+    else if (e.key === 'Enter') {
+      if (con.text.trim()) {
+        const reply = this.execCheat(con.text);
+        // wrap long replies (e.g. id lists) to the panel width, keeping the ? / OK prefix color
+        const lines = reply.match(/.{1,78}(\s|$)/g)?.map(l => l.trim()) ?? [reply];
+        con.log.push('> ' + con.text.toUpperCase(), ...lines.map((l, i) => (i && reply.startsWith('?') ? '? ' + l : l)));
+        con.log = con.log.slice(-6);
+      }
+      con.text = '';
+    } else if (e.key === 'Backspace') con.text = con.text.slice(0, -1);
+    else if (e.key.length === 1 && con.text.length < 32) con.text += e.key;
+  }
+
+  execCheat(cmd: string): string {
+    const inRun = this.mode === 'run' && this.run && ['play', 'pause', 'stand'].includes(this.scene);
+    return runCheat(cmd, {
+      run: inRun ? this.run : null,
+      world: ['play', 'pause'].includes(this.scene) ? this.world : null,
+      jumpToStage: i => { this.run!.stage = i; this.startStage(); },
+      rebuildStage: () => this.startStage(),
+      toggleSlowmo: () => (this.slowmo = !this.slowmo),
+    });
+  }
+
+  drawConsole() {
+    const c = this.r.ctx, con = this.cheat;
+    const h = 150, y0 = VH - h - 10;
+    panel(c, 16, y0, VW - 32, h, '#5cff8a', 'rgba(0,10,4,0.94)');
+    con.log.forEach((line, i) => text(c, line, 30, y0 + 20 + i * 18, 7, line.startsWith('?') ? '#ff5c7a' : line.startsWith('>') ? '#8f86c9' : '#5cff8a', 'left', 0));
+    const cursor = Math.floor(performance.now() / 400) % 2 ? '_' : ' ';
+    text(c, '] ' + con.text.toUpperCase() + cursor, 30, y0 + h - 20, 9, '#fff', 'left', 4);
   }
 
   // ───────────────────────── pause ─────────────────────────
@@ -377,14 +481,13 @@ class Game {
     const c = this.r.ctx;
     if (this.world) this.r.drawWorld(this.world, this.hudInfo(), 0);
     c.save(); c.fillStyle = 'rgba(4,0,14,0.75)'; c.fillRect(0, 0, VW, VH); c.restore();
-    text(c, 'PAUSED', VW / 2, 300, 28, '#ffe600', 'center', 16);
+    text(c, 'PAUSED', VW / 2, 190, 28, '#ffe600', 'center', 16);
     const items = ['RESUME', this.mode === 'run' ? 'ABANDON RUN' : 'QUIT TO TITLE'];
     this.menuNav(items.length);
-    items.forEach((s, i) => text(c, (i === this.cursor ? '> ' : '  ') + s, VW / 2, 400 + i * 50, 14, i === this.cursor ? '#fff' : '#8f86c9', 'center', i === this.cursor ? 8 : 0));
+    items.forEach((s, i) => text(c, (i === this.cursor ? '> ' : '  ') + s, VW / 2, 270 + i * 46, 14, i === this.cursor ? '#fff' : '#8f86c9', 'center', i === this.cursor ? 8 : 0));
     if (this.run && this.mode === 'run') {
-      const ups = Object.entries(this.run.upgrades);
-      text(c, 'YOUR UPGRADES', VW / 2, 540, 9, '#b45cff', 'center', 4);
-      ups.forEach(([id, n], i) => text(c, `${id.replace(/_/g, ' ').toUpperCase()}${n > 1 ? ' x' + n : ''}`, VW / 2, 570 + i * 16, 7, '#8fa0ff', 'center', 0));
+      text(c, 'YOUR UPGRADES  (LAST ALL RUN)', VW / 2, 385, 9, '#b45cff', 'center', 4);
+      drawUpgradeList(c, this.run.upgrades, 50, 410, VW - 100, VH - 90 - 410);
       text(c, `SEED ${this.run.seedCode}`, VW / 2, VH - 60, 8, '#5a5290', 'center', 0);
     }
     if (this.input.pause() || this.input.back()) { this.resume(); return; }
@@ -445,10 +548,22 @@ class Game {
       text(c, s, x + w / 2, 625, 8, sel ? '#ffd23d' : '#8f86c9', 'center', sel ? 6 : 0);
     });
     text(c, this.standMsg || 'PICK ONE UPGRADE TO CONTINUE', VW / 2, 690, 8, this.standMsg ? '#ffd23d' : '#8f86c9', 'center', 0);
-    // owned list
-    const ups = Object.entries(run.upgrades);
-    if (ups.length) wrapText(c, 'HAVE: ' + ups.map(([id, k]) => `${id.replace(/_/g, ' ')}${k > 1 ? ' x' + k : ''}`).join(' · ').toUpperCase(), VW / 2, 730, VW - 80, 6, '#5a5290', 12);
+    // owned upgrades
+    if (Object.keys(run.upgrades).length) {
+      drawUpgradeChips(c, run.upgrades, VW / 2, 730);
+      text(c, 'TAB / (Y): VIEW YOUR UPGRADES', VW / 2, 758, 6, '#8f86c9', 'center', 0);
+    }
     text(c, `SEED ${run.seedCode}`, VW / 2, VH - 30, 7, '#3a3070', 'center', 0);
+    if (this.input.upgradesToggle()) { this.standOverlay = !this.standOverlay; this.audio.ui('move'); }
+    if (this.standOverlay) {
+      c.save(); c.fillStyle = 'rgba(4,0,14,0.97)'; c.fillRect(0, 0, VW, VH); c.restore();
+      text(c, 'YOUR UPGRADES', VW / 2, 90, 18, '#b45cff', 'center', 12);
+      text(c, 'EVERY UPGRADE LASTS FOR THE REST OF THE RUN', VW / 2, 125, 7, '#8f86c9', 'center', 0);
+      drawUpgradeList(c, run.upgrades, 50, 165, VW - 100, VH - 165 - 90);
+      text(c, 'TAB / (Y) / ESC TO CLOSE', VW / 2, VH - 50, 8, '#8f86c9', 'center', 0);
+      if (this.input.back() || this.input.confirm()) this.standOverlay = false;
+      return;
+    }
 
     if (this.input.confirm()) {
       if (!rowShop) {
@@ -456,13 +571,13 @@ class Game {
         if (!u) return;
         run.take(u);
         this.audio.ui('buy');
-        this.startStage();
+        this.nextStage();
       } else if (this.cursor === 0) {
         if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else if (this.cursor === 1) {
         if (run.reroll()) { this.audio.ui('buy'); this.standMsg = 'FRESH FRUIT!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else {
-        run.coins += 15; this.audio.ui('select'); this.startStage();
+        run.coins += 15; this.audio.ui('select'); this.nextStage();
       }
     }
   }
@@ -493,7 +608,8 @@ class Game {
     });
     const glow = 0.6 + 0.4 * Math.sin(this.r.time * 4);
     c.save(); c.globalAlpha = glow;
-    text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
+    if (info.cheated) text(c, 'CHEATED · NOT SAVED', VW / 2, 620, 16, '#ff5c7a', 'center', 16);
+    else text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
     c.restore();
     text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
     if (this.sceneT > 1) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);

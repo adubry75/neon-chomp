@@ -22,12 +22,31 @@ npm run build:single   # → dist/neon-chomp.html, ONE self-contained file (JS i
 - Solo: arrows OR WASD to move, Space/Enter for the action button (used by Pineapple dash). Gamepads work too.
 - Multiplayer devices: "WASD + Space", "Arrows + Enter", and up to 4 gamepads (D-pad/left stick, A = action, B = back, Start = pause).
 - Esc / P / Start pauses. M mutes.
+- Any key starts a stage once you've read its intro card.
+- Pause menu and Fruit Stand (Tab / gamepad Y) list your upgrades. Every upgrade lasts for the rest of the run.
 
 **Modes**
 - **Solo Run**: roguelite of 3 acts × (4 mazes + boss). After each maze you pick an upgrade at the Fruit Stand, where you can also spend coins on lives and rerolls.
 - **Co-op Run (1–4P)**: the same run with shared lives. A downed player becomes a bubble, and a teammate touches it to revive them.
 - **Chomp Royale (2–4P)**: everyone is a Pac. Powered players can eat unpowered ones. Last one standing wins, or the top score after 2:30.
 - **Ghost Squad (2–4P)**: one player is Pac and the others drive ghosts. Roles rotate each round, and ghosts score for catches.
+
+## Cheat console
+Press the backtick key (`` ` ``) to open it. The game pauses while it's open. Enter runs a code; Esc or backtick closes it. A run where you use a cheat shows "CHEATED" on the results screen and doesn't count toward best score, souls or wins.
+
+| Code | Effect |
+|---|---|
+| `HELP` | List codes |
+| `GOD` | Toggle invincibility (lasts across stages) |
+| `LIVES n` / `COINS n` | Set lives / coins |
+| `STAGE n` | Jump to stage 1-15 (5 = Mega Blinky, 10 = Train King, 15 = Maze Eater) |
+| `CLEAR` | Win the current maze or boss |
+| `BOSSHP n` | Set boss hits / cars / cores left |
+| `FRUIT id` | Apply a fruit power (e.g. `FRUIT MELON`) |
+| `UPGRADE id` / `UPGRADE ALL` | Grant upgrades by id (e.g. `FLEET_FEET`) |
+| `MOD id` | Add a modifier and restart the stage (e.g. `MOD ICE`) |
+| `POWER` | Instant power pellet |
+| `SLOWMO` | Toggle half speed |
 
 ## Save data
 Meta progress (souls, unlocks, perks, skins, best score, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field. **If you change the save shape, bump the version and migrate in `loadMeta()`** so existing progress isn't lost.

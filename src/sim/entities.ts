@@ -22,7 +22,8 @@ export interface Pac {
   dashCharges: number;
   dashT: number;
   peelT: number;
-  iceHold: Dir;            // ice: pending turn applied one center late
+  iceDir: Dir;             // ice: the turn currently being slid toward
+  iceSlide: number;        // ice: tiles left to slide before iceDir may be taken
   lifeT: number;           // clones/minis expire
   lives: number;           // royale/squad only
   score: number;           // per-player score (royale/squad)

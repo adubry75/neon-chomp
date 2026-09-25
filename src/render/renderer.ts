@@ -3,8 +3,9 @@ import type { World } from '../sim/world';
 import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
+import type { Pip } from '../game/run';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
-import { T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
+import { FONT, T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
 
 export const VW = 28 * T;           // 672
 export const HUD_TOP = 3 * T;       // 72
@@ -25,6 +26,12 @@ export interface HudInfo {
   playerNames: string[];
   squadGhostScores?: Record<number, number>;
   showControlsHint?: boolean;
+  /** Intro card is waiting for a key press. */
+  introHold?: boolean;
+  /** Boss stage info for the intro card and health bar. */
+  boss?: { name: string; rules: string[]; color: string };
+  /** Run progress through the current act. */
+  pips?: Pip[];
 }
 
 export class Renderer {
@@ -177,12 +184,13 @@ export class Renderer {
       case 'bossHit':
         this.burst(x, y, '#ff2d55', 60, 14, 'spark', 0.9, 4); this.ring(x, y, '#fff', 6, 0.5);
         this.popup(x, y - 2, 'HIT! ' + e.v, '#fff', 16, 1.3); this.addShake(14); this.flash = 0.3; this.flashColor = '#fff';
+        if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST HIT!' : `${e.s} HITS LEFT!`, '#ffe600', 22, 1.8);
         break;
       case 'bossDown':
         for (let i = 0; i < 5; i++) this.burst(x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, ['#ff2d55', '#ffd23d', '#5ce1ff', '#b45cff', '#fff'][i], 40, 14, 'star', 1.4, 5);
         this.popup(x, y - 2, 'BOSS DOWN!', '#ffd23d', 22, 2.2); this.addShake(20); this.flash = 0.5; this.flashColor = '#fff';
         break;
-      case 'core': this.ring(x, y, '#e0b0ff', 10, 0.8); this.burst(x, y, '#e0b0ff', 40, 11, 'star', 1, 4); this.popup(x, y - 1, 'CORE! ' + e.v, '#e0b0ff', 13); this.addShake(10); this.flash = 0.3; this.flashColor = '#b45cff'; break;
+      case 'core': this.ring(x, y, '#e0b0ff', 10, 0.8); this.burst(x, y, '#e0b0ff', 40, 11, 'star', 1, 4); this.popup(x, y - 1, 'CORE! ' + e.v, '#e0b0ff', 13); if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST CORE!' : `${e.s} CORES LEFT!`, '#ffe600', 20, 1.8); this.addShake(10); this.flash = 0.3; this.flashColor = '#b45cff'; break;
       case 'coreSpawn': this.ring(x, y, '#e0b0ff', 4, 0.8); break;
       case 'clear': this.mazeFlash = 2.2; break;
       case 'teleport': this.burst(x, y, `hsl(${e.v},100%,65%)`, 14, 6, 'spark', 0.35); if (e.x2 !== undefined) this.burst(e.x2, e.y2!, `hsl(${e.v},100%,65%)`, 14, 6, 'spark', 0.35); break;
@@ -323,6 +331,7 @@ export class Renderer {
     c.globalCompositeOperation = 'source-over';
     if (this.wallLayer) c.drawImage(this.wallLayer, 0, 0, VW, MAZE_H);
     c.restore();
+    if (w.has('ice')) this.drawIce();
 
     // conveyors
     if (w.conveyor) {
@@ -636,25 +645,132 @@ export class Renderer {
     const c = this.ctx;
     if (w.phase === 'ready') {
       const fy = w.maze.fruitSpot.y * T;
-      text(c, 'READY!', VW / 2, fy, 16, '#ffe600', 'center', 14);
-      const intro = w.time < 0.1 || (w.phaseT > 0.4 && w.deathsThisStage === 0);
-      if (intro && hud.bannerTitle) {
-        const a = Math.min(1, w.phaseT / 0.4);
-        c.save(); c.globalAlpha = a;
-        panel(c, 56, 4.4 * T, VW - 112, T * 4.4 + (w.cfg.modifiers.length ? T * 1.2 : 0), hud.wallColor);
-        text(c, hud.bannerTitle, VW / 2, 5.6 * T, 15, '#fff', 'center', 12);
-        text(c, hud.bannerSub, VW / 2, 7 * T, 9, hud.wallColor, 'center', 6);
-        const mods = w.cfg.modifiers;
-        mods.forEach((id, i) => {
-          const md = MODIFIERS[id];
-          text(c, `${md.name}: ${md.desc}`, VW / 2, 8.1 * T + i * T * 0.75, 7, md.color, 'center', 4);
-        });
-        c.restore();
-      }
+      if (hud.introHold && hud.bannerTitle) this.drawIntroCard(w, hud);
+      else text(c, 'READY!', VW / 2, fy, 16, '#ffe600', 'center', 14);
       if (hud.showControlsHint) text(c, 'ARROWS / WASD / GAMEPAD TO MOVE', VW / 2, 20.2 * T, 8, '#8fa0ff', 'center', 0);
     }
     if (w.phase === 'clear') text(c, w.cfg.boss ? 'BOSS DEFEATED!' : 'MAZE CLEAR!', VW / 2, w.maze.fruitSpot.y * T, 16, '#5cff8a', 'center', 16);
     if (w.phase === 'over' && w.cfg.mode === 'run') text(c, 'GAME  OVER', VW / 2, w.maze.fruitSpot.y * T, 18, '#ff2d55', 'center', 16);
+  }
+
+  /** Stage intro card, held on screen until the player presses a key. */
+  private drawIntroCard(w: World, hud: HudInfo) {
+    const c = this.ctx;
+    if (hud.boss) { this.drawBossCard(hud.boss); return; }
+    const mods = w.cfg.modifiers;
+    const y0 = 4.4 * T, h = T * 5.2 + mods.length * T * 0.75;
+    panel(c, 56, y0, VW - 112, h, hud.wallColor);
+    text(c, hud.bannerTitle, VW / 2, y0 + 1.2 * T, 15, '#fff', 'center', 12);
+    text(c, hud.bannerSub, VW / 2, y0 + 2.6 * T, 9, hud.wallColor, 'center', 6);
+    mods.forEach((id, i) => {
+      const md = MODIFIERS[id];
+      text(c, `${md.name}: ${md.desc}`, VW / 2, y0 + 3.7 * T + i * T * 0.75, 7, md.color, 'center', 4);
+    });
+    const blink = Math.floor(this.time * 2.5) % 2 === 0;
+    text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.8 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
+  }
+
+  private drawBossCard(boss: NonNullable<HudInfo['boss']>) {
+    const c = this.ctx;
+    const y0 = 3.6 * T, h = 9 * T;
+    panel(c, 40, y0, VW - 80, h, boss.color, 'rgba(20,0,10,0.94)', 3);
+    const warn = Math.floor(this.time * 4) % 2 === 0;
+    text(c, '⚠  BOSS  ⚠', VW / 2, y0 + 1.1 * T, 13, warn ? '#ff2d55' : '#7a1020', 'center', warn ? 12 : 0);
+    text(c, boss.name, VW / 2, y0 + 2.9 * T, 20, boss.color, 'center', 16);
+    boss.rules.forEach((line, i) => text(c, line, VW / 2, y0 + 4.7 * T + i * T * 1.05, 9, '#fff', 'center', 4));
+    const blink = Math.floor(this.time * 2.5) % 2 === 0;
+    text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.9 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
+  }
+
+  /** `ACT I  ● ● ◉ ○` plus a ghost for the boss, in the top-right corner. */
+  private drawPips(pips: Pip[], label: string, color: string) {
+    const c = this.ctx;
+    const y = 0.8 * T, step = 15;
+    let x = VW - 1 * T - (pips.length - 1) * step;
+    text(c, label, x - 14, y, 8, color, 'right', 6);
+    const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+    for (const p of pips) {
+      c.save();
+      c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.5; c.shadowColor = color; c.shadowBlur = 6;
+      if (p === 'boss' || p === 'bossCurrent') {
+        const cur = p === 'bossCurrent';
+        c.restore();
+        drawGhost(c, x, y, cur ? 7 + pulse : 6, '#ff2d55', LEFT, { t: this.time, alpha: cur ? 1 : 0.5 });
+        x += step;
+        continue;
+      }
+      c.beginPath(); c.arc(x, y, p === 'current' ? 5 : 4, 0, Math.PI * 2);
+      if (p === 'done') c.fill();
+      else if (p === 'todo') { c.globalAlpha = 0.5; c.stroke(); }
+      else {
+        c.fillStyle = '#fff'; c.shadowColor = '#fff'; c.shadowBlur = 4 + pulse * 10; c.fill();
+      }
+      c.restore();
+      x += step;
+    }
+  }
+
+  /** Frosty tint plus slow drifting sparkles while the ice modifier is on. */
+  private drawIce() {
+    const c = this.ctx;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = 'rgba(140,230,255,0.12)';
+    c.fillRect(0, 0, VW, MAZE_H);
+    c.fillStyle = '#d8fbff';
+    for (let i = 0; i < 70; i++) {
+      const x = (i * 157.3 + this.time * (6 + (i % 5) * 3)) % VW;
+      const y = (i * 97.1 + Math.sin(this.time * 0.7 + i) * 12 + MAZE_H) % MAZE_H;
+      c.globalAlpha = 0.25 + 0.25 * Math.sin(this.time * 3 + i * 1.7);
+      c.fillRect(x, y, 3, 3);
+    }
+    c.restore();
+  }
+
+  /** Pills naming each active stage modifier, under the 1UP score. */
+  private drawModifierBadges(w: World) {
+    const c = this.ctx;
+    let x = 0.5 * T;
+    const y = 2.55 * T;
+    for (const id of w.cfg.modifiers) {
+      const md = MODIFIERS[id];
+      c.save(); c.font = `6px ${FONT}`;
+      const tw = c.measureText(md.name).width;
+      c.restore();
+      const bw = tw + 14;
+      c.save();
+      c.strokeStyle = md.color; c.lineWidth = 1.2; c.shadowColor = md.color; c.shadowBlur = 6;
+      c.fillStyle = hexA(md.color, 0.14);
+      c.beginPath(); c.roundRect(x, y - 6, bw, 12, 6); c.fill(); c.stroke();
+      c.restore();
+      text(c, md.name, x + bw / 2, y + 0.5, 6, md.color, 'center', 0);
+      x += bw + 6;
+    }
+  }
+
+  /** Big segmented health bar across the top of the maze on boss stages. */
+  private drawBossBar(w: World, hud: HudInfo) {
+    const boss = hud.boss;
+    if (!boss) return;
+    let label = boss.name, segs = 0, left = 0;
+    if (w.cfg.boss === 'mega' && w.mega) { segs = w.mega.maxHp; left = Math.max(0, w.mega.hp); }
+    else if (w.cfg.boss === 'train') {
+      segs = 12; left = w.cars.filter(c => c.alive).length;
+      if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
+    } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }
+    if (!segs) return;
+    const c = this.ctx;
+    const bw = VW * 0.5, x0 = (VW - bw) / 2, y = 2.5 * T, gap = 3;
+    const sw = (bw - gap * (segs - 1)) / segs;
+    text(c, label, x0 - 8, y + 4, 6, boss.color, 'right', 4);
+    for (let i = 0; i < segs; i++) {
+      const on = i < left;
+      c.save();
+      c.fillStyle = on ? boss.color : hexA(boss.color, 0.15);
+      if (on) { c.shadowColor = boss.color; c.shadowBlur = 8; }
+      c.fillRect(x0 + i * (sw + gap), y, sw, 7);
+      c.restore();
+    }
   }
 
   private drawHud(w: World, hud: HudInfo) {
@@ -664,7 +780,8 @@ export class Renderer {
       text(c, String(w.score).padStart(2, '0'), 3 * T + 40, 1.9 * T, 14, '#fff', 'right', 6);
       text(c, 'HIGH SCORE', VW / 2, 0.8 * T, 10, '#ff2d55', 'center', 6);
       text(c, String(Math.max(hud.best, w.score)), VW / 2, 1.9 * T, 14, '#fff', 'center', 6);
-      text(c, hud.stageLabel, VW - 1 * T, 0.8 * T, 8, hud.wallColor, 'right', 6);
+      if (hud.pips) this.drawPips(hud.pips, hud.stageLabel, hud.wallColor);
+      else text(c, hud.stageLabel, VW - 1 * T, 0.8 * T, 8, hud.wallColor, 'right', 6);
       // coins
       c.save(); c.fillStyle = '#ffd23d'; c.shadowColor = '#ffd23d'; c.shadowBlur = 8;
       c.beginPath(); c.arc(VW - 4.2 * T, 1.9 * T, 6, 0, Math.PI * 2); c.fill(); c.restore();
@@ -722,11 +839,8 @@ export class Renderer {
     if (w.freezeT > 0) { text(c, `FREEZE ${w.freezeT.toFixed(1)}`, ex, by, 8, '#aef6ff', 'right', 6); ex -= 110; }
     if (w.frenzyT > 0) { text(c, `FRENZY ${w.frenzyT.toFixed(1)}`, ex, by, 8, '#ff5cf0', 'right', 6); ex -= 110; }
     if (hud.mode === 'run') {
-      const mods = w.cfg.modifiers;
-      mods.forEach((id, i) => text(c, MODIFIERS[id].name, VW / 2, VH - 1.55 * T + i * 11, 6, MODIFIERS[id].color, 'center', 0));
-      if (w.cfg.boss === 'eater') text(c, `CORES LEFT: ${w.coresLeft}`, VW / 2, by + 6, 8, '#e0b0ff', 'center', 6);
-      if (w.cfg.boss === 'train') text(c, `CARS LEFT: ${w.cars.filter(c => c.alive).length}`, VW / 2, by + 6, 8, '#ffd23d', 'center', 6);
-      if (w.cfg.boss === 'mega' && w.mega) text(c, `MEGA BLINKY HP ${w.mega.hp}/${w.mega.maxHp}`, VW / 2, by + 6, 8, '#ff2d55', 'center', 6);
+      this.drawModifierBadges(w);
+      this.drawBossBar(w, hud);
     }
   }
 }
