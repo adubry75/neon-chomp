@@ -2,6 +2,13 @@
 
 A neon Pac-Man roguelite. TypeScript + Vite + Canvas 2D. There are no asset files: all art is drawn in code and all audio is synthesized with WebAudio. Personal project, not for release.
 
+> ### ⚠️ Disclaimer
+> This is a non-commercial fan project made for fun, learning and experimentation. It is **not** affiliated with, endorsed by, or in any way connected to Bandai Namco Entertainment Inc. PAC-MAN and all related characters, names and marks are trademarks of Bandai Namco. They are used here in tribute, by someone who has lost far too many quarters to Blinky.
+>
+> Nothing here is for sale, and no money is made from it. It has no ads, microtransactions or loot boxes, and no ghost was harmed (well, eaten, but they respawn). All code, art and sound were created from scratch; none of the original game's assets are included.
+>
+> If you're from Bandai Namco and want this taken down, just ask nicely and it will vanish faster than a frightened ghost at the end of a power pellet. Please don't send the lawyers; they don't look like they'd fit in the ghost house.
+
 ## Run / test / build
 ```
 npm install
