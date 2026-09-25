@@ -4,7 +4,7 @@ import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
-import { T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
+import { FONT, T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
 
 export const VW = 28 * T;           // 672
 export const HUD_TOP = 3 * T;       // 72
@@ -328,6 +328,7 @@ export class Renderer {
     c.globalCompositeOperation = 'source-over';
     if (this.wallLayer) c.drawImage(this.wallLayer, 0, 0, VW, MAZE_H);
     c.restore();
+    if (w.has('ice')) this.drawIce();
 
     // conveyors
     if (w.conveyor) {
@@ -678,6 +679,44 @@ export class Renderer {
     text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.9 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
   }
 
+  /** Frosty tint plus slow drifting sparkles while the ice modifier is on. */
+  private drawIce() {
+    const c = this.ctx;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = 'rgba(140,230,255,0.12)';
+    c.fillRect(0, 0, VW, MAZE_H);
+    c.fillStyle = '#d8fbff';
+    for (let i = 0; i < 70; i++) {
+      const x = (i * 157.3 + this.time * (6 + (i % 5) * 3)) % VW;
+      const y = (i * 97.1 + Math.sin(this.time * 0.7 + i) * 12 + MAZE_H) % MAZE_H;
+      c.globalAlpha = 0.25 + 0.25 * Math.sin(this.time * 3 + i * 1.7);
+      c.fillRect(x, y, 3, 3);
+    }
+    c.restore();
+  }
+
+  /** Pills naming each active stage modifier, under the 1UP score. */
+  private drawModifierBadges(w: World) {
+    const c = this.ctx;
+    let x = 0.5 * T;
+    const y = 2.55 * T;
+    for (const id of w.cfg.modifiers) {
+      const md = MODIFIERS[id];
+      c.save(); c.font = `6px ${FONT}`;
+      const tw = c.measureText(md.name).width;
+      c.restore();
+      const bw = tw + 14;
+      c.save();
+      c.strokeStyle = md.color; c.lineWidth = 1.2; c.shadowColor = md.color; c.shadowBlur = 6;
+      c.fillStyle = hexA(md.color, 0.14);
+      c.beginPath(); c.roundRect(x, y - 6, bw, 12, 6); c.fill(); c.stroke();
+      c.restore();
+      text(c, md.name, x + bw / 2, y + 0.5, 6, md.color, 'center', 0);
+      x += bw + 6;
+    }
+  }
+
   /** Big segmented health bar across the top of the maze on boss stages. */
   private drawBossBar(w: World, hud: HudInfo) {
     const boss = hud.boss;
@@ -768,8 +807,7 @@ export class Renderer {
     if (w.freezeT > 0) { text(c, `FREEZE ${w.freezeT.toFixed(1)}`, ex, by, 8, '#aef6ff', 'right', 6); ex -= 110; }
     if (w.frenzyT > 0) { text(c, `FRENZY ${w.frenzyT.toFixed(1)}`, ex, by, 8, '#ff5cf0', 'right', 6); ex -= 110; }
     if (hud.mode === 'run') {
-      const mods = w.cfg.modifiers;
-      mods.forEach((id, i) => text(c, MODIFIERS[id].name, VW / 2, VH - 1.55 * T + i * 11, 6, MODIFIERS[id].color, 'center', 0));
+      this.drawModifierBadges(w);
       this.drawBossBar(w, hud);
     }
   }

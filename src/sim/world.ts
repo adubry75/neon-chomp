@@ -7,7 +7,7 @@ import { levelParams, type LevelParams } from '../data/levels';
 import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
 import type { Dozer, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
-import { setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
+import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
 export type BossId = 'mega' | 'train' | 'eater';
@@ -137,7 +137,7 @@ export class World {
     return {
       id: this.idGen++, player, kind, x: this.maze.pacStart.x, y: this.maze.pacStart.y, dir: LEFT, desired: NONE,
       state: 'alive', stateT: 0, color, mouth: 0, moving: false, powerT: 0, invulnT: 0, fx: {},
-      dashCharges: 0, dashT: 0, peelT: 0, iceHold: NONE, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
+      dashCharges: 0, dashT: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
     };
   }
 
@@ -215,7 +215,7 @@ export class World {
       } else {
         const s = this.safeSpawn(); p.x = s.x; p.y = s.y; p.dir = i % 2 ? RIGHT : LEFT;
       }
-      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceHold = NONE;
+      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
       p.invulnT = initial ? 0 : 1.2; p.trail = [];
     });
     const stagger = [0, 1.5, 4, 6.5, 9];
@@ -442,9 +442,12 @@ export class World {
 
     const ice = this.has('ice') && p.kind !== 'mini';
     if (p.kind !== 'mini') {
-      if (p.desired !== NONE && p.desired === opposite(p.dir)) { p.dir = p.desired; p.iceHold = NONE; }
+      if (p.desired !== NONE && p.desired === opposite(p.dir)) { p.dir = p.desired; p.iceDir = NONE; p.iceSlide = 0; }
       else if (!ice) tryCorner(p, p.desired, m);
+      else if (p.desired !== NONE && p.desired !== p.dir && p.desired !== p.iceDir) { p.iceDir = p.desired; p.iceSlide = ICE_SLIDE; }
     }
+    const stepDist = this.pacSpeed(p) * TICK;
+    if (ice) p.iceSlide = Math.max(0, p.iceSlide - stepDist);
 
     const ox = p.x, oy = p.y;
     const decide = (mv: { x: number; y: number; dir: Dir }): Dir => {
@@ -453,14 +456,12 @@ export class World {
       const want = p.desired;
       const canWant = want !== NONE && m.canGo(tx, ty, want, 'pac');
       const canStraight = mv.dir !== NONE && m.canGo(tx, ty, mv.dir, 'pac');
-      if (ice && canWant && want !== mv.dir && canStraight) {
-        if (p.iceHold !== want) { p.iceHold = want; return mv.dir; }
-      }
-      if (canWant) { p.iceHold = NONE; return want; }
+      if (ice && canWant && want !== mv.dir && canStraight && p.iceSlide > 0) return mv.dir;
+      if (canWant) { p.iceDir = NONE; return want; }
       if (canStraight) return mv.dir;
       return NONE;
     };
-    advance(p, this.pacSpeed(p) * TICK, m.w, decide, mv => this.onCenter(mv as Pac, true));
+    advance(p, stepDist, m.w, decide, mv => this.onCenter(mv as Pac, true));
     const moved = Math.abs(p.x - ox) + Math.abs(p.y - oy) > 1e-6;
     p.moving = moved;
     if (moved) p.mouth += TICK * 14;

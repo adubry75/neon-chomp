@@ -5,9 +5,12 @@ import { DIRS, DX, DY, type Vec } from './types';
 
 export type ModifierId = 'blackout' | 'ice' | 'conveyor' | 'teleport' | 'gates' | 'mirror' | 'ghostTrain';
 
+/** Ice: tiles Pac slides after pressing a new turn before the turn can happen. */
+export const ICE_SLIDE = 0.5;
+
 export const MODIFIERS: Record<ModifierId, { name: string; desc: string; color: string }> = {
   blackout:   { name: 'BLACKOUT', desc: 'Lights out. You only see near yourself.', color: '#8a7dff' },
-  ice:        { name: 'ICE RINK', desc: 'You slide one extra tile before turning.', color: '#9ff3ff' },
+  ice:        { name: 'ICE RINK', desc: 'Slippery! Press turns early.', color: '#9ff3ff' },
   conveyor:   { name: 'CONVEYORS', desc: 'Belts speed you up... or slow you down.', color: '#ffcf4d' },
   teleport:   { name: 'TELEPORTERS', desc: 'Paired portals zap anything that enters.', color: '#ff5cf0' },
   gates:      { name: 'SHIFTING WALLS', desc: 'Neon gates open and close every few seconds.', color: '#ff6a3d' },

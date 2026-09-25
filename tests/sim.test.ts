@@ -180,3 +180,39 @@ describe('bosses are beatable', () => {
     expect(w.bossDefeated).toBe(true);
   });
 });
+
+describe('ice', () => {
+  // Classic maze row 5 is one long corridor. Tile (6,5) is a 4-way junction,
+  // tile (7,5) has no side exits, and (1,5) is the next place to turn down.
+  const iceWorld = (x: number) => {
+    const w = new World({ ...cfg(4), modifiers: ['ice'] });
+    w.phase = 'play';
+    const p = w.pacs[0];
+    p.x = x; p.y = 5.5; p.dir = LEFT; p.desired = LEFT; p.invulnT = 99;
+    return w;
+  };
+  const hold = (w: World, dir: 0 | 1 | 2 | 3, ticks: number) => {
+    for (let i = 0; i < ticks; i++) { w.setInput(0, dir, false); w.update(); }
+  };
+  it('turns when the turn is pressed a tile before the junction', () => {
+    const w = iceWorld(7.5);
+    hold(w, DOWN, 20);
+    expect(w.pacs[0].x).toBe(6.5);
+    expect(w.pacs[0].y).toBeGreaterThan(6);
+  });
+  it('slides past when pressed less than half a tile early, then takes the next opening', () => {
+    const w = iceWorld(6.8);
+    hold(w, DOWN, 10);
+    expect(w.pacs[0].x).toBeLessThan(6.5);
+    expect(w.pacs[0].y).toBe(5.5);
+    hold(w, DOWN, 60);
+    expect(w.pacs[0].x).toBe(1.5);
+    expect(w.pacs[0].y).toBeGreaterThan(5.5);
+  });
+  it('reverses instantly', () => {
+    const w = iceWorld(9.5);
+    hold(w, LEFT, 3);
+    hold(w, RIGHT, 1);
+    expect(w.pacs[0].dir).toBe(RIGHT);
+  });
+});
