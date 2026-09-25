@@ -10,13 +10,13 @@ const ACT_R = ['Enter', 'ShiftRight', 'Slash', 'NumpadEnter', 'ControlRight'];
 const CONFIRM = ['Enter', 'Space', 'NumpadEnter'];
 const BACK = ['Escape', 'Backspace'];
 
-interface PadState { dir: Dir; a: boolean; b: boolean; start: boolean; connected: boolean }
+interface PadState { dir: Dir; a: boolean; b: boolean; y: boolean; start: boolean; connected: boolean }
 
 export class Input {
   private held = new Map<string, number>(); // code -> press order
   private order = 0;
   private pressedThisFrame = new Set<string>();
-  private pads: PadState[] = [0, 1, 2, 3].map(() => ({ dir: NONE, a: false, b: false, start: false, connected: false }));
+  private pads: PadState[] = [0, 1, 2, 3].map(() => ({ dir: NONE, a: false, b: false, y: false, start: false, connected: false }));
   private prevPads: PadState[] = this.pads.map(p => ({ ...p }));
   private prevMenuDir: Dir = NONE;
   menuDirEdge: Dir = NONE;
@@ -26,7 +26,7 @@ export class Input {
 
   constructor(target: Window) {
     target.addEventListener('keydown', e => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
       if (!this.held.has(e.code)) { this.held.set(e.code, ++this.order); this.pressedThisFrame.add(e.code); }
       this.anyKeyThisFrame = true;
       this.gesture();
@@ -45,14 +45,14 @@ export class Input {
     for (let i = 0; i < 4; i++) {
       const gp = gps[i];
       const s = this.pads[i];
-      if (!gp || !gp.connected) { Object.assign(s, { dir: NONE, a: false, b: false, start: false, connected: false }); continue; }
+      if (!gp || !gp.connected) { Object.assign(s, { dir: NONE, a: false, b: false, y: false, start: false, connected: false }); continue; }
       s.connected = true;
       const btn = (n: number) => !!gp.buttons[n]?.pressed;
       const ax = gp.axes[0] ?? 0, ay = gp.axes[1] ?? 0;
       let d: Dir = NONE;
       if (btn(12)) d = UP; else if (btn(13)) d = DOWN; else if (btn(14)) d = LEFT; else if (btn(15)) d = RIGHT;
       else if (Math.max(Math.abs(ax), Math.abs(ay)) > 0.5) d = Math.abs(ax) > Math.abs(ay) ? (ax < 0 ? LEFT : RIGHT) : (ay < 0 ? UP : DOWN);
-      s.dir = d; s.a = btn(0) || btn(2); s.b = btn(1); s.start = btn(9);
+      s.dir = d; s.a = btn(0) || btn(2); s.b = btn(1); s.y = btn(3); s.start = btn(9);
       if ((s.a && !this.prevPads[i].a) || (s.start && !this.prevPads[i].start)) this.gesture();
     }
     // menu direction with key-repeat
@@ -119,6 +119,10 @@ export class Input {
     return ['Escape', 'KeyP'].some(c => this.pressedThisFrame.has(c)) || this.pads.some((p, i) => p.start && !this.prevPads[i].start);
   }
   key(code: string): boolean { return this.pressedThisFrame.has(code); }
+  /** Tab or gamepad Y: show/hide the owned-upgrades overlay. */
+  upgradesToggle(): boolean {
+    return this.pressedThisFrame.has('Tab') || this.pads.some((p, i) => p.y && !this.prevPads[i].y);
+  }
   /** Any key or any gamepad button/direction pressed this frame. */
   anyPressed(): boolean {
     return this.anyKeyThisFrame || this.pads.some((p, i) => {

@@ -5,6 +5,7 @@ import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
 import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
 import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
+import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
@@ -48,6 +49,8 @@ class Game {
   standMsg = '';
   /** Stage intro card is up; the world doesn't tick until a key is pressed. */
   introHold = false;
+  /** Fruit Stand: full-screen owned-upgrades overlay is open. */
+  standOverlay = false;
   cutQueue: CutsceneId[] = [];
   cutThen: (() => void) | null = null;
 
@@ -418,14 +421,13 @@ class Game {
     const c = this.r.ctx;
     if (this.world) this.r.drawWorld(this.world, this.hudInfo(), 0);
     c.save(); c.fillStyle = 'rgba(4,0,14,0.75)'; c.fillRect(0, 0, VW, VH); c.restore();
-    text(c, 'PAUSED', VW / 2, 300, 28, '#ffe600', 'center', 16);
+    text(c, 'PAUSED', VW / 2, 190, 28, '#ffe600', 'center', 16);
     const items = ['RESUME', this.mode === 'run' ? 'ABANDON RUN' : 'QUIT TO TITLE'];
     this.menuNav(items.length);
-    items.forEach((s, i) => text(c, (i === this.cursor ? '> ' : '  ') + s, VW / 2, 400 + i * 50, 14, i === this.cursor ? '#fff' : '#8f86c9', 'center', i === this.cursor ? 8 : 0));
+    items.forEach((s, i) => text(c, (i === this.cursor ? '> ' : '  ') + s, VW / 2, 270 + i * 46, 14, i === this.cursor ? '#fff' : '#8f86c9', 'center', i === this.cursor ? 8 : 0));
     if (this.run && this.mode === 'run') {
-      const ups = Object.entries(this.run.upgrades);
-      text(c, 'YOUR UPGRADES', VW / 2, 540, 9, '#b45cff', 'center', 4);
-      ups.forEach(([id, n], i) => text(c, `${id.replace(/_/g, ' ').toUpperCase()}${n > 1 ? ' x' + n : ''}`, VW / 2, 570 + i * 16, 7, '#8fa0ff', 'center', 0));
+      text(c, 'YOUR UPGRADES  (LAST ALL RUN)', VW / 2, 385, 9, '#b45cff', 'center', 4);
+      drawUpgradeList(c, this.run.upgrades, 50, 410, VW - 100, VH - 90 - 410);
       text(c, `SEED ${this.run.seedCode}`, VW / 2, VH - 60, 8, '#5a5290', 'center', 0);
     }
     if (this.input.pause() || this.input.back()) { this.resume(); return; }
@@ -486,10 +488,22 @@ class Game {
       text(c, s, x + w / 2, 625, 8, sel ? '#ffd23d' : '#8f86c9', 'center', sel ? 6 : 0);
     });
     text(c, this.standMsg || 'PICK ONE UPGRADE TO CONTINUE', VW / 2, 690, 8, this.standMsg ? '#ffd23d' : '#8f86c9', 'center', 0);
-    // owned list
-    const ups = Object.entries(run.upgrades);
-    if (ups.length) wrapText(c, 'HAVE: ' + ups.map(([id, k]) => `${id.replace(/_/g, ' ')}${k > 1 ? ' x' + k : ''}`).join(' · ').toUpperCase(), VW / 2, 730, VW - 80, 6, '#5a5290', 12);
+    // owned upgrades
+    if (Object.keys(run.upgrades).length) {
+      drawUpgradeChips(c, run.upgrades, VW / 2, 730);
+      text(c, 'TAB / (Y): VIEW YOUR UPGRADES', VW / 2, 758, 6, '#8f86c9', 'center', 0);
+    }
     text(c, `SEED ${run.seedCode}`, VW / 2, VH - 30, 7, '#3a3070', 'center', 0);
+    if (this.input.upgradesToggle()) { this.standOverlay = !this.standOverlay; this.audio.ui('move'); }
+    if (this.standOverlay) {
+      c.save(); c.fillStyle = 'rgba(4,0,14,0.97)'; c.fillRect(0, 0, VW, VH); c.restore();
+      text(c, 'YOUR UPGRADES', VW / 2, 90, 18, '#b45cff', 'center', 12);
+      text(c, 'EVERY UPGRADE LASTS FOR THE REST OF THE RUN', VW / 2, 125, 7, '#8f86c9', 'center', 0);
+      drawUpgradeList(c, run.upgrades, 50, 165, VW - 100, VH - 165 - 90);
+      text(c, 'TAB / (Y) / ESC TO CLOSE', VW / 2, VH - 50, 8, '#8f86c9', 'center', 0);
+      if (this.input.back() || this.input.confirm()) this.standOverlay = false;
+      return;
+    }
 
     if (this.input.confirm()) {
       if (!rowShop) {
