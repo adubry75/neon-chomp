@@ -25,6 +25,8 @@ export interface HudInfo {
   playerNames: string[];
   squadGhostScores?: Record<number, number>;
   showControlsHint?: boolean;
+  /** Intro card is waiting for a key press. */
+  introHold?: boolean;
 }
 
 export class Renderer {
@@ -636,25 +638,28 @@ export class Renderer {
     const c = this.ctx;
     if (w.phase === 'ready') {
       const fy = w.maze.fruitSpot.y * T;
-      text(c, 'READY!', VW / 2, fy, 16, '#ffe600', 'center', 14);
-      const intro = w.time < 0.1 || (w.phaseT > 0.4 && w.deathsThisStage === 0);
-      if (intro && hud.bannerTitle) {
-        const a = Math.min(1, w.phaseT / 0.4);
-        c.save(); c.globalAlpha = a;
-        panel(c, 56, 4.4 * T, VW - 112, T * 4.4 + (w.cfg.modifiers.length ? T * 1.2 : 0), hud.wallColor);
-        text(c, hud.bannerTitle, VW / 2, 5.6 * T, 15, '#fff', 'center', 12);
-        text(c, hud.bannerSub, VW / 2, 7 * T, 9, hud.wallColor, 'center', 6);
-        const mods = w.cfg.modifiers;
-        mods.forEach((id, i) => {
-          const md = MODIFIERS[id];
-          text(c, `${md.name}: ${md.desc}`, VW / 2, 8.1 * T + i * T * 0.75, 7, md.color, 'center', 4);
-        });
-        c.restore();
-      }
+      if (hud.introHold && hud.bannerTitle) this.drawIntroCard(w, hud);
+      else text(c, 'READY!', VW / 2, fy, 16, '#ffe600', 'center', 14);
       if (hud.showControlsHint) text(c, 'ARROWS / WASD / GAMEPAD TO MOVE', VW / 2, 20.2 * T, 8, '#8fa0ff', 'center', 0);
     }
     if (w.phase === 'clear') text(c, w.cfg.boss ? 'BOSS DEFEATED!' : 'MAZE CLEAR!', VW / 2, w.maze.fruitSpot.y * T, 16, '#5cff8a', 'center', 16);
     if (w.phase === 'over' && w.cfg.mode === 'run') text(c, 'GAME  OVER', VW / 2, w.maze.fruitSpot.y * T, 18, '#ff2d55', 'center', 16);
+  }
+
+  /** Stage intro card, held on screen until the player presses a key. */
+  private drawIntroCard(w: World, hud: HudInfo) {
+    const c = this.ctx;
+    const mods = w.cfg.modifiers;
+    const y0 = 4.4 * T, h = T * 5.2 + mods.length * T * 0.75;
+    panel(c, 56, y0, VW - 112, h, hud.wallColor);
+    text(c, hud.bannerTitle, VW / 2, y0 + 1.2 * T, 15, '#fff', 'center', 12);
+    text(c, hud.bannerSub, VW / 2, y0 + 2.6 * T, 9, hud.wallColor, 'center', 6);
+    mods.forEach((id, i) => {
+      const md = MODIFIERS[id];
+      text(c, `${md.name}: ${md.desc}`, VW / 2, y0 + 3.7 * T + i * T * 0.75, 7, md.color, 'center', 4);
+    });
+    const blink = Math.floor(this.time * 2.5) % 2 === 0;
+    text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.8 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
   }
 
   private drawHud(w: World, hud: HudInfo) {

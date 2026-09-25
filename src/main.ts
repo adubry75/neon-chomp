@@ -46,6 +46,8 @@ class Game {
   toastT = 0;
   sceneT = 0;
   standMsg = '';
+  /** Stage intro card is up; the world doesn't tick until a key is pressed. */
+  introHold = false;
 
   constructor() {
     this.applySettings();
@@ -235,6 +237,7 @@ class Game {
   startStage() {
     this.world = this.run!.makeWorld();
     this.r.particles = []; this.r.popups = [];
+    this.introHold = true;
     this.go('play');
   }
 
@@ -246,6 +249,7 @@ class Game {
       mode: 'royale', maze: generateMaze(seed), level: 3, mods: defaultMods(), modifiers: [], boss: null,
       players: infos, seed, fruitPool: FRUIT_IDS.filter(f => f !== 'key'), lives: 3, scoreBase: 0, royaleTime: 150,
     });
+    this.introHold = true;
     this.go('play');
   }
 
@@ -261,6 +265,7 @@ class Game {
       fruitPool: ['cherry', 'orange', 'apple', 'melon', 'bell', 'pineapple', 'banana'], lives: 2, scoreBase: 0,
       squadPac: pac.slot, ghostPlayers: ghostsP,
     });
+    this.introHold = true;
     this.go('play');
   }
 
@@ -290,6 +295,7 @@ class Game {
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
         playerNames: [], showControlsHint: this.run.stage === 0 && w.deathsThisStage === 0,
+        introHold: this.introHold,
       };
     }
     return {
@@ -297,12 +303,18 @@ class Game {
       bannerTitle: this.mode === 'royale' ? 'CHOMP ROYALE' : `GHOST SQUAD · ROUND ${this.squadRound + 1}`,
       bannerSub: this.mode === 'royale' ? 'POWER UP, THEN EAT YOUR FRIENDS' : `P${(w.cfg.squadPac ?? 0) + 1} IS PAC. GHOSTS: CATCH THEM!`,
       playerNames: [], squadGhostScores: this.mode === 'squad' ? this.squadTotals : undefined,
+      introHold: this.introHold,
     };
   }
 
   play(dt: number) {
     const w = this.world!;
     if (this.input.pause()) { this.audio.ui('back'); this.scene = 'pause'; this.cursor = 0; this.audio.play('none'); this.audio.sirenOn = false; return; }
+    if (this.introHold) {
+      this.r.drawWorld(w, this.hudInfo(), dt);
+      if (this.sceneT > 0.25 && this.input.anyPressed()) { this.introHold = false; this.acc = 0; this.audio.ui('select'); }
+      return;
+    }
     for (const p of this.players) w.setInput(p.slot, this.deviceDir(p), this.deviceAct(p));
     this.acc += dt;
     let steps = 0;

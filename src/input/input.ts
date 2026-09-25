@@ -119,6 +119,13 @@ export class Input {
     return ['Escape', 'KeyP'].some(c => this.pressedThisFrame.has(c)) || this.pads.some((p, i) => p.start && !this.prevPads[i].start);
   }
   key(code: string): boolean { return this.pressedThisFrame.has(code); }
+  /** Any key or any gamepad button/direction pressed this frame. */
+  anyPressed(): boolean {
+    return this.anyKeyThisFrame || this.pads.some((p, i) => {
+      const q = this.prevPads[i];
+      return (p.a && !q.a) || (p.b && !q.b) || (p.start && !q.start) || (p.dir !== NONE && q.dir === NONE);
+    });
+  }
   startPressed(): boolean {
     return this.pressedThisFrame.has('Enter') || this.pads.some((p, i) => p.start && !this.prevPads[i].start);
   }
