@@ -1,0 +1,33 @@
+/** Numeric/boolean knobs that upgrades and curses turn. The World reads these. */
+export interface Mods {
+  powerTime: number;        // + seconds of frightened time
+  chainChomp: boolean;      // ghost combo survives between power pellets
+  doubleChomp: boolean;     // power pellets stack their time
+  fruitRate: number;        // fruit spawn frequency multiplier
+  fruitDuration: number;    // fruit effect duration multiplier
+  clydeFriend: boolean;
+  shields: number;          // hits ignored per maze
+  pelletBomb: boolean;
+  tunnelRat: boolean;
+  pacSpeed: number;
+  ghostSpeed: number;
+  coinMult: number;
+  scoreMult: number;
+  ghostPoints: number;
+  pelletPoints: number;
+  startFruit: boolean;
+  hunted: boolean;          // 5th ghost
+  blackout: boolean;        // every maze is dark
+  magnetRadius: number;     // passive pellet magnet
+  eliteChance: number;
+  comboCoins: number;       // extra coins per ghost eaten
+  fruitStandChoices: number;
+  frightSlow: number;       // multiplier on frightened ghost speed
+}
+
+export const defaultMods = (): Mods => ({
+  powerTime: 0, chainChomp: false, doubleChomp: false, fruitRate: 1, fruitDuration: 1,
+  clydeFriend: false, shields: 0, pelletBomb: false, tunnelRat: false, pacSpeed: 1, ghostSpeed: 1,
+  coinMult: 1, scoreMult: 1, ghostPoints: 1, pelletPoints: 1, startFruit: false, hunted: false,
+  blackout: false, magnetRadius: 0, eliteChance: 0, comboCoins: 0, fruitStandChoices: 3, frightSlow: 1,
+});

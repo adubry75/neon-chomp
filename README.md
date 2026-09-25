@@ -1,0 +1,43 @@
+# Neon Chomp
+
+A neon Pac-Man roguelite. TypeScript + Vite + Canvas 2D. There are no asset files: all art is drawn in code and all audio is synthesized with WebAudio. Personal project, not for release.
+
+## Run / test / build
+```
+npm install
+npm run dev            # http://localhost:5173, hot reload
+npm test               # Vitest sim tests: ghost AI, movement, 1000 generated mazes, fruits, bosses, determinism
+npm run build          # standard Vite build → dist/index.html + dist/assets/*.js
+npm run build:single   # → dist/neon-chomp.html, ONE self-contained file (JS inlined). This is the deploy/share file.
+```
+`build:single` runs `scripts/build-single.mjs`, which builds with Vite and then inlines the JS bundle into an HTML shell. The only external request is the Google Fonts stylesheet for "Press Start 2P" (it falls back to monospace when offline).
+
+## Debug URLs
+- `?auto=run&seed=123&stage=N`: jump straight into a run. `stage` is a 0-based index into the run plan (5 stages per act, and index 4 of each act is the boss). With the current plan, 4 = Mega Blinky, 9 = Train King, 14 = Maze Eater.
+- `?auto=royale` (4 players) and `?auto=squad` (3 players): jump into the versus modes.
+- The console exposes `__game`, e.g. `__game.world.applyFruit(__game.world.pacs[0], 'melon')`.
+
+## How to play
+**Controls**
+- Solo: arrows OR WASD to move, Space/Enter for the action button (used by Pineapple dash). Gamepads work too.
+- Multiplayer devices: "WASD + Space", "Arrows + Enter", and up to 4 gamepads (D-pad/left stick, A = action, B = back, Start = pause).
+- Esc / P / Start pauses. M mutes.
+
+**Modes**
+- **Solo Run**: roguelite of 3 acts × (4 mazes + boss). After each maze you pick an upgrade at the Fruit Stand, where you can also spend coins on lives and rerolls.
+- **Co-op Run (1–4P)**: the same run with shared lives. A downed player becomes a bubble, and a teammate touches it to revive them.
+- **Chomp Royale (2–4P)**: everyone is a Pac. Powered players can eat unpowered ones. Last one standing wins, or the top score after 2:30.
+- **Ghost Squad (2–4P)**: one player is Pac and the others drive ghosts. Roles rotate each round, and ghosts score for catches.
+
+## Save data
+Meta progress (souls, unlocks, perks, skins, best score, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field. **If you change the save shape, bump the version and migrate in `loadMeta()`** so existing progress isn't lost.
+
+## Layout
+- `src/sim/`: pure game simulation (no DOM). Runs a fixed 60 Hz step with a seeded RNG, so it is deterministic. `world.ts` is the core.
+- `src/data/`: fruits, upgrades, level tables and the classic maze. Most content changes happen here.
+- `src/game/`: run structure (acts, stage plan, Fruit Stand, shop) and meta save.
+- `src/render/`: canvas renderer, FX, HUD and drawing helpers.
+- `src/audio/`: synth SFX and a procedural chiptune.
+- `src/input/`: keyboard halves plus 4 gamepads.
+- `src/main.ts`: scene state machine (title, lobby, play, stand, results, shops, settings).
+- `docs/DESIGN.md`: the original design doc. `DECISIONS.md`: where the build deviates from it. `ROADMAP.md`: what's next.
