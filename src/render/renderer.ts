@@ -3,6 +3,7 @@ import type { World } from '../sim/world';
 import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
+import type { Pip } from '../game/run';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
 import { FONT, T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
 
@@ -29,6 +30,8 @@ export interface HudInfo {
   introHold?: boolean;
   /** Boss stage info for the intro card and health bar. */
   boss?: { name: string; rules: string[]; color: string };
+  /** Run progress through the current act. */
+  pips?: Pip[];
 }
 
 export class Renderer {
@@ -679,6 +682,34 @@ export class Renderer {
     text(c, 'PRESS ANY KEY', VW / 2, y0 + h - 0.9 * T, 9, blink ? '#ffe600' : '#6a5a20', 'center', blink ? 8 : 0);
   }
 
+  /** `ACT I  ● ● ◉ ○` plus a ghost for the boss, in the top-right corner. */
+  private drawPips(pips: Pip[], label: string, color: string) {
+    const c = this.ctx;
+    const y = 0.8 * T, step = 15;
+    let x = VW - 1 * T - (pips.length - 1) * step;
+    text(c, label, x - 14, y, 8, color, 'right', 6);
+    const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+    for (const p of pips) {
+      c.save();
+      c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.5; c.shadowColor = color; c.shadowBlur = 6;
+      if (p === 'boss' || p === 'bossCurrent') {
+        const cur = p === 'bossCurrent';
+        c.restore();
+        drawGhost(c, x, y, cur ? 7 + pulse : 6, '#ff2d55', LEFT, { t: this.time, alpha: cur ? 1 : 0.5 });
+        x += step;
+        continue;
+      }
+      c.beginPath(); c.arc(x, y, p === 'current' ? 5 : 4, 0, Math.PI * 2);
+      if (p === 'done') c.fill();
+      else if (p === 'todo') { c.globalAlpha = 0.5; c.stroke(); }
+      else {
+        c.fillStyle = '#fff'; c.shadowColor = '#fff'; c.shadowBlur = 4 + pulse * 10; c.fill();
+      }
+      c.restore();
+      x += step;
+    }
+  }
+
   /** Frosty tint plus slow drifting sparkles while the ice modifier is on. */
   private drawIce() {
     const c = this.ctx;
@@ -749,7 +780,8 @@ export class Renderer {
       text(c, String(w.score).padStart(2, '0'), 3 * T + 40, 1.9 * T, 14, '#fff', 'right', 6);
       text(c, 'HIGH SCORE', VW / 2, 0.8 * T, 10, '#ff2d55', 'center', 6);
       text(c, String(Math.max(hud.best, w.score)), VW / 2, 1.9 * T, 14, '#fff', 'center', 6);
-      text(c, hud.stageLabel, VW - 1 * T, 0.8 * T, 8, hud.wallColor, 'right', 6);
+      if (hud.pips) this.drawPips(hud.pips, hud.stageLabel, hud.wallColor);
+      else text(c, hud.stageLabel, VW - 1 * T, 0.8 * T, 8, hud.wallColor, 'right', 6);
       // coins
       c.save(); c.fillStyle = '#ffd23d'; c.shadowColor = '#ffd23d'; c.shadowBlur = 8;
       c.beginPath(); c.arc(VW - 4.2 * T, 1.9 * T, 6, 0, Math.PI * 2); c.fill(); c.restore();

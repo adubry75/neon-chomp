@@ -3,7 +3,7 @@ import { T, drawFruit, drawGhost, drawPac, panel, text, wrapText } from './rende
 import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
-import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT } from './game/run';
+import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
 import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
@@ -290,7 +290,7 @@ class Game {
       const boss = p.boss ? BOSS_INFO[p.boss] : null;
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
-        stageLabel: `${['I', 'II', 'III'][p.act]}-${p.index + 1}`,
+        stageLabel: `ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
         wallColor: boss ? boss.color : ACT_COLORS[p.act],
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),

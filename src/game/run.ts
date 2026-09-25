@@ -27,6 +27,15 @@ export const ACTS = ['ACT I · NEON DISTRICT', 'ACT II · GHOST RAILS', 'ACT III
 export const STAGES_PER_ACT = 5;
 export const TOTAL_STAGES = 15;
 
+export type Pip = 'done' | 'current' | 'todo' | 'boss' | 'bossCurrent';
+
+/** Progress markers for the act containing `stage` (the last one is always the boss). */
+export function actPips(stage: number): Pip[] {
+  const idx = stage % STAGES_PER_ACT;
+  return Array.from({ length: STAGES_PER_ACT }, (_, i): Pip =>
+    i === STAGES_PER_ACT - 1 ? (i === idx ? 'bossCurrent' : 'boss') : i < idx ? 'done' : i === idx ? 'current' : 'todo');
+}
+
 export class Run {
   seed: number;
   rng: Rng;
