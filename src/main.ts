@@ -3,7 +3,8 @@ import { T, drawFruit, drawGhost, drawPac, panel, text, wrapText } from './rende
 import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
-import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
+import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
+import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
 import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
@@ -12,11 +13,10 @@ import { generateMaze } from './sim/mazegen';
 import { defaultMods } from './sim/mods';
 import { DOWN, LEFT, NONE, RIGHT, TICK, UP, type Dir } from './sim/types';
 
-type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus';
+type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene';
 type LobbyMode = 'coop' | 'royale' | 'squad';
 
 const PLAYER_COLORS = ['#ffe600', '#5cff8a', '#ff5cf0', '#f4f4ff'];
-const ACT_COLORS = ['#2d7bff', '#ff2df0', '#39ffb4'];
 const DEVICES: DeviceId[] = ['kbL', 'kbR', 'pad0', 'pad1', 'pad2', 'pad3'];
 const DEVICE_LABEL: Record<DeviceId, string> = { kb: 'KEYBOARD', kbL: 'WASD + SPACE', kbR: 'ARROWS + ENTER', pad0: 'GAMEPAD 1', pad1: 'GAMEPAD 2', pad2: 'GAMEPAD 3', pad3: 'GAMEPAD 4' };
 
@@ -48,6 +48,8 @@ class Game {
   standMsg = '';
   /** Stage intro card is up; the world doesn't tick until a key is pressed. */
   introHold = false;
+  cutQueue: CutsceneId[] = [];
+  cutThen: (() => void) | null = null;
 
   constructor() {
     this.applySettings();
@@ -71,7 +73,7 @@ class Game {
   trackFor() {
     switch (this.scene) {
       case 'title': case 'meta': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
-      case 'stand': return 'stand';
+      case 'stand': case 'cutscene': return 'stand';
       case 'pause': return 'none';
       case 'play': return this.world?.cfg.boss ? 'boss' : 'play';
     }
@@ -99,6 +101,7 @@ class Game {
       case 'settings': this.settingsScene(); break;
       case 'help': this.help(); break;
       case 'versus': this.versusResults(); break;
+      case 'cutscene': this.cutscene(dt); break;
     }
     if (this.toastT > 0) {
       this.toastT -= dt;
@@ -231,7 +234,32 @@ class Game {
     this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta);
     this.run.stage = stage;
     this.meta.runs++; saveMeta(this.meta);
-    this.startStage();
+    if (stage === 0) this.playCutscenes(['title0'], () => this.startStage());
+    else this.startStage();
+  }
+
+  /** Start the run's current stage, with the intermission + title card first when a new act begins. */
+  nextStage() {
+    const p = this.run!.current;
+    if (p.index === 0 && this.run!.stage > 0) this.playCutscenes([`gag${p.act}` as CutsceneId, `title${p.act}` as CutsceneId], () => this.startStage());
+    else this.startStage();
+  }
+
+  playCutscenes(ids: CutsceneId[], then: () => void) {
+    this.cutQueue = [...ids];
+    this.cutThen = then;
+    this.go('cutscene');
+  }
+
+  cutscene(dt: number) {
+    this.r.time += dt;
+    const id = this.cutQueue[0];
+    if (id) drawCutscene(this.r.ctx, id, this.sceneT);
+    const skip = this.sceneT > 0.3 && this.input.anyPressed();
+    if (id && this.sceneT < CUTSCENE_LEN[id] && !skip) return;
+    this.cutQueue.shift();
+    this.sceneT = 0;
+    if (!this.cutQueue.length) { const then = this.cutThen; this.cutThen = null; then?.(); }
   }
 
   startStage() {
@@ -342,7 +370,7 @@ class Game {
       const run = this.run!;
       run.absorb(w);
       if (w.done === 'clear') {
-        if (!run.advance()) { this.endRun(true); return; }
+        if (!run.advance()) { this.playCutscenes(['ending'], () => this.endRun(true)); return; }
         run.rollOffers();
         this.standMsg = '';
         this.go('stand');
@@ -469,13 +497,13 @@ class Game {
         if (!u) return;
         run.take(u);
         this.audio.ui('buy');
-        this.startStage();
+        this.nextStage();
       } else if (this.cursor === 0) {
         if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else if (this.cursor === 1) {
         if (run.reroll()) { this.audio.ui('buy'); this.standMsg = 'FRESH FRUIT!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else {
-        run.coins += 15; this.audio.ui('select'); this.startStage();
+        run.coins += 15; this.audio.ui('select'); this.nextStage();
       }
     }
   }

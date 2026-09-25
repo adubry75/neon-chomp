@@ -24,6 +24,7 @@ export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: strin
 };
 
 export const ACTS = ['ACT I · NEON DISTRICT', 'ACT II · GHOST RAILS', 'ACT III · THE GLITCH'];
+export const ACT_COLORS = ['#2d7bff', '#ff2df0', '#39ffb4'];
 export const STAGES_PER_ACT = 5;
 export const TOTAL_STAGES = 15;
 
