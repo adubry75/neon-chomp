@@ -3,11 +3,11 @@ import { LEFT, RIGHT } from '../sim/types';
 import { drawGhost, drawPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
 
-/** Act title cards, the two between-act chase gags, and the ending. */
-export type CutsceneId = 'title0' | 'title1' | 'title2' | 'gag1' | 'gag2' | 'ending';
+/** The opening gag, act title cards, the two between-act chase gags, and the ending. */
+export type CutsceneId = 'intro' | 'title0' | 'title1' | 'title2' | 'gag1' | 'gag2' | 'ending';
 
 export const CUTSCENE_LEN: Record<CutsceneId, number> = {
-  title0: 2.8, title1: 2.8, title2: 2.8, gag1: 8.2, gag2: 9, ending: 9,
+  intro: 6.8, title0: 2.8, title1: 2.8, title2: 2.8, gag1: 8.2, gag2: 9, ending: 9,
 };
 
 const GHOST_COLORS = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
@@ -17,6 +17,7 @@ const chomp = (t: number) => 0.04 + 0.26 * Math.abs(Math.sin(t * 14));
 export function drawCutscene(c: Ctx, id: CutsceneId, t: number) {
   switch (id) {
     case 'title0': case 'title1': case 'title2': titleCard(c, +id.slice(5), t); break;
+    case 'intro': gagWakeUp(c, t); break;
     case 'gag1': gagChase(c, t); break;
     case 'gag2': gagTrain(c, t); break;
     case 'ending': ending(c, t); break;
@@ -44,6 +45,65 @@ function titleCard(c: Ctx, act: number, t: number) {
   text(c, head, VW / 2, VH / 2 - 26, 40, '#ffe600', 'center', 24);
   text(c, name, VW / 2, VH / 2 + 30, 18, color, 'center', 14);
   c.restore();
+}
+
+/** Opening: Pac naps, gets bonked by a pellet, chomps a trail, powers up and scares off the ghosts. */
+function gagWakeUp(c: Ctx, t: number) {
+  const y = VH / 2 + 40;
+  const sleepX = 90, trail0 = 160, trailStep = 40, trailN = 7;
+  const powerX = trail0 + trailN * trailStep;
+  floor(c, y + 30);
+  // Pac: asleep until the bonk, then chomps along the trail and on past the power pellet
+  const wake = 1.9, go = 2.5, speed = 170;
+  const px = t < go ? sleepX : sleepX + (t - go) * speed;
+  const hop = t >= go ? -Math.abs(Math.sin((t - go) * 9)) * 5 : 0;
+  // pellets vanish once Pac reaches them
+  if (t > 2.1) {
+    for (let i = 0; i < trailN; i++) {
+      const x = trail0 + i * trailStep;
+      if (x < px + 4 || t < 2.1 + i * 0.06) continue;
+      c.save(); c.fillStyle = '#ffe9b0'; c.shadowColor = '#fff'; c.shadowBlur = 8;
+      c.beginPath(); c.arc(x, y, 4, 0, Math.PI * 2); c.fill(); c.restore();
+    }
+  }
+  const powered = px >= powerX;
+  if (!powered && t > 2.1) {
+    const r = 10 + Math.sin(t * 8) * 1.5;
+    c.save(); c.fillStyle = '#fff4e0'; c.shadowColor = '#fff'; c.shadowBlur = 16;
+    c.beginPath(); c.arc(powerX, y, r, 0, Math.PI * 2); c.fill(); c.restore();
+  }
+  // the bonk pellet bounces in from the right and lands on Pac's head
+  if (t > 0.9 && t < wake) {
+    const k = (t - 0.9) / (wake - 0.9);
+    const bx = VW + 20 - k * (VW + 20 - sleepX);
+    const by = y - 20 - Math.abs(Math.sin(k * Math.PI * 3)) * 90 * (1 - k * 0.6);
+    c.save(); c.fillStyle = '#ffe9b0'; c.shadowColor = '#fff'; c.shadowBlur = 8;
+    c.beginPath(); c.arc(bx, by, 4, 0, Math.PI * 2); c.fill(); c.restore();
+  }
+  if (t < wake) {
+    drawPac(c, sleepX, y + Math.sin(t * 2) * 1.5, 16, RIGHT, 0, '#ffe600', 10);
+    for (let i = 0; i < 3; i++) {
+      const k = ((t * 0.6 + i / 3) % 1);
+      c.save(); c.globalAlpha = 1 - k;
+      text(c, i % 2 ? 'Z' : 'z', sleepX + 14 + k * 26 + i * 4, y - 24 - k * 50, 8 + i * 3, '#8fa0ff', 'center', 0);
+      c.restore();
+    }
+  } else {
+    if (t < go + 0.2) text(c, '!', sleepX, y - 42 - Math.min(1, (t - wake) * 8) * 6, 20, '#ff2d55', 'center', 10);
+    drawPac(c, px, y + hop, 16, RIGHT, t < go ? 0.2 : chomp(t), '#ffe600');
+  }
+  // the ghosts peek in from the right and creep toward Pac, then flee once he powers up
+  const peek = Math.min(1, Math.max(0, (t - 3.2) / 0.6));
+  const poweredAt = go + (powerX - sleepX) / speed;
+  const creep = Math.max(0, Math.min(t, poweredAt) - 3.8) * 40;
+  GHOST_COLORS.forEach((col, i) => {
+    const baseX = VW + 30 - peek * (90 + i * 30) - creep;
+    const flee = powered ? (t - poweredAt) * 190 : 0;
+    const gy = y + Math.sin(t * 5 + i) * 3;
+    if (powered) drawGhost(c, baseX + flee, gy, 16, '#2d2dff', RIGHT, { t: t + i, fright: true, flash: Math.floor(t * 8) % 2 === 0 });
+    else drawGhost(c, baseX, gy, 16, col, LEFT, { t: t + i });
+  });
+  if (powered && t - poweredAt < 0.25) { c.save(); c.globalAlpha = 0.3 * (1 - (t - poweredAt) / 0.25); c.fillStyle = '#5c7bff'; c.fillRect(0, 0, VW, VH); c.restore(); }
 }
 
 /** Blinky chases Pac off screen; a giant Pac chases a blue Blinky back. */

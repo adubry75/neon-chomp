@@ -244,7 +244,7 @@ class Game {
     this.run.stage = stage;
     this.world = null;
     this.meta.runs++; saveMeta(this.meta);
-    if (stage === 0) this.playCutscenes(['title0'], () => this.startStage());
+    if (stage === 0) this.playCutscenes(['intro', 'title0'], () => this.startStage());
     else this.startStage();
   }
 
