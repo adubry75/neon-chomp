@@ -95,6 +95,8 @@ export class World {
   voidSpeed = 0.42;
   coresLeft = 0;
   bossDefeated = false;
+  /** Cheat: main pacs can't be hurt. */
+  god = false;
   private idGen = 1;
   private tpCool = new WeakMap<object, number>();
 
@@ -993,6 +995,7 @@ export class World {
   hurtPac(p: Pac, byHuman: number) {
     if (p.kind === 'clone') { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: p.color }); return; }
     if (p.kind === 'mini') return;
+    if (this.god && p.kind === 'main') return;
     const mode = this.cfg.mode;
     if (mode === 'run' && this.shieldsLeft > 0) {
       this.shieldsLeft--; p.invulnT = 2;
@@ -1182,6 +1185,35 @@ export class World {
     this.voidSpeed += 0.08;
     if (this.coresLeft <= 0) this.bossDown(x, y);
     else this.placeCore();
+  }
+
+  // ───────────────────────────── cheat console hooks ─────────────────────────────
+
+  cheatPower() { const p = this.mainPacs[0]; if (p) this.power(p); }
+
+  /** Finish the stage: beat the boss, or eat every pellet. */
+  cheatWin() {
+    if (this.cfg.boss) {
+      if (this.bossDefeated) return;
+      const p = this.mainPacs[0];
+      this.bossDown(p?.x ?? 14, p?.y ?? 14);
+      return;
+    }
+    const m = this.maze;
+    for (let i = 0; i < m.items.length; i++) if (m.items[i] === I_PELLET || m.items[i] === I_POWER) m.items[i] = I_NONE;
+    m.pelletsLeft = 0;
+  }
+
+  /** Set the boss's remaining health (hits, cars or cores). False when there's no boss. */
+  cheatBossHp(n: number): boolean {
+    if (this.mega) { this.mega.hp = Math.max(1, Math.min(this.mega.maxHp, n)); return true; }
+    if (this.cfg.boss === 'train') {
+      let keep = Math.max(0, n);
+      for (const c of this.cars) if (c.alive) { if (keep > 0) keep--; else c.alive = false; }
+      return true;
+    }
+    if (this.cfg.boss === 'eater') { this.coresLeft = Math.max(1, Math.min(3, n)); return true; }
+    return false;
   }
 
   private bossDown(x: number, y: number) {

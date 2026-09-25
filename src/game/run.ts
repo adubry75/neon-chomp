@@ -57,6 +57,8 @@ export class Run {
   rerolls = 0;
   livesBought = 0;
   won = false;
+  /** A cheat was used: results aren't saved to the meta progress. */
+  cheated = false;
   offers: UpgradeDef[] = [];
 
   constructor(seed: number, players: PlayerInfo[], meta: MetaSave) {

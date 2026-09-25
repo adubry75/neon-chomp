@@ -6,6 +6,7 @@ import { World, type PlayerInfo } from './sim/world';
 import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
 import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
+import { runCheat } from './game/cheats';
 import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
@@ -42,7 +43,7 @@ class Game {
   squadRound = 0;
   squadTotals: Record<number, number> = {};
   lastRound: { title: string; lines: [string, string][] } | null = null;
-  resultInfo: { won: boolean; souls: number; newBest: boolean } | null = null;
+  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean } | null = null;
   toast = '';
   toastT = 0;
   sceneT = 0;
@@ -51,6 +52,9 @@ class Game {
   introHold = false;
   /** Fruit Stand: full-screen owned-upgrades overlay is open. */
   standOverlay = false;
+  /** Backtick cheat console. */
+  cheat = { open: false, text: '', log: [] as string[] };
+  slowmo = false;
   cutQueue: CutsceneId[] = [];
   cutThen: (() => void) | null = null;
 
@@ -58,6 +62,7 @@ class Game {
     this.applySettings();
     this.input.onFirstGesture = () => { this.audio.init(); this.audio.play(this.trackFor()); };
     (window as unknown as { __game: Game }).__game = this;
+    window.addEventListener('keydown', e => this.consoleKey(e));
     const q = new URLSearchParams(location.search);
     if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0);
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
@@ -110,6 +115,7 @@ class Game {
       this.toastT -= dt;
       text(this.r.ctx, this.toast, VW / 2, VH - 14, 9, '#fff', 'center', 6);
     }
+    if (this.cheat.open) this.drawConsole();
     this.r.post();
     this.input.endFrame();
     requestAnimationFrame(t => this.frame(t));
@@ -236,6 +242,7 @@ class Game {
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
     this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta);
     this.run.stage = stage;
+    this.world = null;
     this.meta.runs++; saveMeta(this.meta);
     if (stage === 0) this.playCutscenes(['title0'], () => this.startStage());
     else this.startStage();
@@ -266,7 +273,9 @@ class Game {
   }
 
   startStage() {
+    const god = this.world?.god ?? false; // cheat survives stage changes within a run
     this.world = this.run!.makeWorld();
+    this.world.god = god;
     this.r.particles = []; this.r.popups = [];
     this.introHold = true;
     this.go('play');
@@ -341,6 +350,7 @@ class Game {
 
   play(dt: number) {
     const w = this.world!;
+    if (this.cheat.open) { this.r.drawWorld(w, this.hudInfo(), 0); return; }
     if (this.input.pause()) { this.audio.ui('back'); this.scene = 'pause'; this.cursor = 0; this.audio.play('none'); this.audio.sirenOn = false; return; }
     if (this.introHold) {
       this.r.drawWorld(w, this.hudInfo(), dt);
@@ -348,7 +358,7 @@ class Game {
       return;
     }
     for (const p of this.players) w.setInput(p.slot, this.deviceDir(p), this.deviceAct(p));
-    this.acc += dt;
+    this.acc += this.slowmo ? dt / 2 : dt;
     let steps = 0;
     while (this.acc >= TICK && steps < 6) {
       w.update();
@@ -404,15 +414,65 @@ class Game {
   endRun(won: boolean) {
     const run = this.run!;
     run.won = won;
-    const souls = soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
-    const newBest = run.score > this.meta.best;
-    this.meta.souls += souls;
-    this.meta.best = Math.max(this.meta.best, run.score);
-    this.meta.bossesBeaten += run.bossesBeaten;
-    if (won) this.meta.wins++;
-    saveMeta(this.meta);
-    this.resultInfo = { won, souls, newBest };
+    // cheated runs never touch the save
+    const souls = run.cheated ? 0 : soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
+    const newBest = !run.cheated && run.score > this.meta.best;
+    if (!run.cheated) {
+      this.meta.souls += souls;
+      this.meta.best = Math.max(this.meta.best, run.score);
+      this.meta.bossesBeaten += run.bossesBeaten;
+      if (won) this.meta.wins++;
+      saveMeta(this.meta);
+    }
+    this.resultInfo = { won, souls, newBest, cheated: run.cheated };
     this.go('results');
+  }
+
+  // ───────────────────────── cheat console ─────────────────────────
+
+  consoleKey(e: KeyboardEvent) {
+    const con = this.cheat;
+    if (e.code === 'Backquote') {
+      e.preventDefault();
+      con.open = !con.open; con.text = '';
+      this.input.suspended = con.open;
+      if (con.open && !con.log.length) con.log.push('TYPE HELP FOR CODES. ` OR ESC TO CLOSE.');
+      return;
+    }
+    if (!con.open) return;
+    e.preventDefault();
+    if (e.key === 'Escape') { con.open = false; this.input.suspended = false; }
+    else if (e.key === 'Enter') {
+      if (con.text.trim()) {
+        const reply = this.execCheat(con.text);
+        // wrap long replies (e.g. id lists) to the panel width, keeping the ? / OK prefix color
+        const lines = reply.match(/.{1,78}(\s|$)/g)?.map(l => l.trim()) ?? [reply];
+        con.log.push('> ' + con.text.toUpperCase(), ...lines.map((l, i) => (i && reply.startsWith('?') ? '? ' + l : l)));
+        con.log = con.log.slice(-6);
+      }
+      con.text = '';
+    } else if (e.key === 'Backspace') con.text = con.text.slice(0, -1);
+    else if (e.key.length === 1 && con.text.length < 32) con.text += e.key;
+  }
+
+  execCheat(cmd: string): string {
+    const inRun = this.mode === 'run' && this.run && ['play', 'pause', 'stand'].includes(this.scene);
+    return runCheat(cmd, {
+      run: inRun ? this.run : null,
+      world: ['play', 'pause'].includes(this.scene) ? this.world : null,
+      jumpToStage: i => { this.run!.stage = i; this.startStage(); },
+      rebuildStage: () => this.startStage(),
+      toggleSlowmo: () => (this.slowmo = !this.slowmo),
+    });
+  }
+
+  drawConsole() {
+    const c = this.r.ctx, con = this.cheat;
+    const h = 150, y0 = VH - h - 10;
+    panel(c, 16, y0, VW - 32, h, '#5cff8a', 'rgba(0,10,4,0.94)');
+    con.log.forEach((line, i) => text(c, line, 30, y0 + 20 + i * 18, 7, line.startsWith('?') ? '#ff5c7a' : line.startsWith('>') ? '#8f86c9' : '#5cff8a', 'left', 0));
+    const cursor = Math.floor(performance.now() / 400) % 2 ? '_' : ' ';
+    text(c, '] ' + con.text.toUpperCase() + cursor, 30, y0 + h - 20, 9, '#fff', 'left', 4);
   }
 
   // ───────────────────────── pause ─────────────────────────
@@ -548,7 +608,8 @@ class Game {
     });
     const glow = 0.6 + 0.4 * Math.sin(this.r.time * 4);
     c.save(); c.globalAlpha = glow;
-    text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
+    if (info.cheated) text(c, 'CHEATED · NOT SAVED', VW / 2, 620, 16, '#ff5c7a', 'center', 16);
+    else text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
     c.restore();
     text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
     if (this.sceneT > 1) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);

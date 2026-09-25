@@ -22,10 +22,13 @@ export class Input {
   menuDirEdge: Dir = NONE;
   private repeatT = 0;
   anyKeyThisFrame = false;
+  /** While true (cheat console open), key presses don't reach the game. */
+  suspended = false;
   onFirstGesture: (() => void) | null = null;
 
   constructor(target: Window) {
     target.addEventListener('keydown', e => {
+      if (this.suspended) return;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
       if (!this.held.has(e.code)) { this.held.set(e.code, ++this.order); this.pressedThisFrame.add(e.code); }
       this.anyKeyThisFrame = true;
