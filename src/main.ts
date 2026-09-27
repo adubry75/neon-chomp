@@ -7,7 +7,8 @@ import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './gam
 import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
-import { META_ITEMS, defaultMeta, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { META_ITEMS, defaultMeta, loadMeta, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { TIERS, tierLabel, tierSouls } from './data/tiers';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
 import { MODIFIERS } from './sim/modifiers';
@@ -43,7 +44,9 @@ class Game {
   squadRound = 0;
   squadTotals: Record<number, number> = {};
   lastRound: { title: string; lines: [string, string][] } | null = null;
-  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean } | null = null;
+  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean; unlocked: number | null } | null = null;
+  /** Reincarnation tier the next Solo/Co-op run starts on (picked on the title screen). */
+  tier = 0;
   toast = '';
   toastT = 0;
   sceneT = 0;
@@ -60,11 +63,12 @@ class Game {
 
   constructor() {
     this.applySettings();
+    this.tier = this.meta.tierUnlocked;
     this.input.onFirstGesture = () => { this.audio.init(); this.audio.play(this.trackFor()); };
     (window as unknown as { __game: Game }).__game = this;
     window.addEventListener('keydown', e => this.consoleKey(e));
     const q = new URLSearchParams(location.search);
-    if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0);
+    if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0, Math.min(5, Math.max(0, Number(q.get('tier')) || 0)));
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
     if (q.get('auto') === 'squad') { this.players = [0, 1, 2].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startSquad(); }
     requestAnimationFrame(t => this.frame(t));
@@ -155,13 +159,20 @@ class Game {
 
     const items = ['SOLO RUN', 'CO-OP RUN  (1-4P)', 'CHOMP ROYALE  (2-4P)', 'GHOST SQUAD  (2-4P)', 'SOUL SHOP', 'HOW TO PLAY', 'SETTINGS'];
     this.menuNav(items.length);
+    if (this.meta.tierUnlocked > 0 && this.cursor <= 1) {
+      const d = this.input.menuDirEdge, n = this.meta.tierUnlocked + 1;
+      if (d === LEFT) { this.tier = (this.tier + n - 1) % n; this.audio.ui('move'); }
+      if (d === RIGHT) { this.tier = (this.tier + 1) % n; this.audio.ui('move'); }
+      text(c, `◀  ${tierLabel(this.tier)}  ▶`, VW / 2, 345, 11, TIERS[this.tier].color, 'center', 10);
+    }
     items.forEach((s, i) => {
       const sel = i === this.cursor;
       const yy = 380 + i * 46;
       if (sel) { panel(c, VW / 2 - 200, yy - 18, 400, 36, '#ffe600', 'rgba(40,20,60,0.7)'); drawPac(c, VW / 2 - 175, yy, 9, RIGHT, 0.05 + 0.25 * Math.abs(Math.sin(t * 10)), '#ffe600', 8); }
       text(c, s, VW / 2, yy, 13, sel ? '#fff' : '#8f86c9', 'center', sel ? 10 : 0);
     });
-    text(c, `BEST ${this.meta.best}   ·   SOULS ${this.meta.souls}   ·   RUNS ${this.meta.runs}   ·   WINS ${this.meta.wins}`, VW / 2, VH - 64, 8, '#b45cff', 'center', 6);
+    const tierTxt = this.meta.tierUnlocked ? `   ·   R${this.meta.tierUnlocked}` : '';
+    text(c, `BEST ${this.meta.best}   ·   SOULS ${this.meta.souls}   ·   RUNS ${this.meta.runs}   ·   WINS ${this.meta.wins}${tierTxt}`, VW / 2, VH - 64, 8, '#b45cff', 'center', 6);
     text(c, 'ENTER / SPACE / (A) TO SELECT   ·   M TO MUTE', VW / 2, VH - 40, 7, '#5a5290', 'center', 0);
     if (this.input.confirm()) {
       this.audio.ui('select');
@@ -192,6 +203,7 @@ class Game {
     const min = this.lobbyMode === 'coop' ? 1 : 2;
     text(c, names[this.lobbyMode], VW / 2, 90, 22, '#ffe600', 'center', 16);
     wrapText(c, blurbs[this.lobbyMode], VW / 2, 140, VW - 120, 8, '#8fa0ff', 16);
+    if (this.lobbyMode === 'coop' && this.meta.tierUnlocked > 0) text(c, tierLabel(this.tier), VW / 2, 198, 9, TIERS[this.tier].color, 'center', 8);
     for (let i = 0; i < 4; i++) {
       const p = this.players[i];
       const x = 40 + (i % 2) * 306, y = 220 + Math.floor(i / 2) * 200;
@@ -225,16 +237,16 @@ class Game {
   }
 
   launchLobby() {
-    if (this.lobbyMode === 'coop') this.startRun(this.players);
+    if (this.lobbyMode === 'coop') this.startRun(this.players, undefined, 0, this.tier);
     else if (this.lobbyMode === 'royale') this.startRoyale();
     else { this.squadRound = 0; this.squadTotals = {}; this.startSquad(); }
   }
 
   // ───────────────────────── run flow ─────────────────────────
 
-  startSolo(seed?: number, stage = 0) {
+  startSolo(seed?: number, stage = 0, tier = this.tier) {
     this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
-    this.startRun(this.players, seed, stage);
+    this.startRun(this.players, seed, stage, tier);
   }
 
   startRun(players: Player[], seed?: number, stage = 0, tier = 0) {
@@ -330,7 +342,7 @@ class Game {
       const boss = p.boss ? BOSS_INFO[p.boss] : null;
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
-        stageLabel: `ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
+        stageLabel: `${this.run.tier ? `R${this.run.tier} · ` : ''}ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
         wallColor: boss ? boss.color : ACT_COLORS[p.act],
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
@@ -383,7 +395,12 @@ class Game {
       const run = this.run!;
       run.absorb(w);
       if (w.done === 'clear') {
-        if (!run.advance()) { this.playCutscenes(['ending'], () => this.endRun(true)); return; }
+        if (!run.advance()) {
+          const ids: CutsceneId[] = ['ending'];
+          if (!run.cheated && !this.meta.seenCutscenes.includes('sting')) ids.push('sting');
+          this.playCutscenes(ids, () => this.endRun(true));
+          return;
+        }
         run.rollOffers();
         this.standMsg = '';
         this.go('stand');
@@ -415,16 +432,21 @@ class Game {
     const run = this.run!;
     run.won = won;
     // cheated runs never touch the save
-    const souls = run.cheated ? 0 : soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
+    const souls = run.cheated ? 0 : tierSouls(soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won), run.tier);
     const newBest = !run.cheated && run.score > this.meta.best;
+    let unlocked: number | null = null;
     if (!run.cheated) {
       this.meta.souls += souls;
       this.meta.best = Math.max(this.meta.best, run.score);
       this.meta.bossesBeaten += run.bossesBeaten;
-      if (won) this.meta.wins++;
+      if (won) {
+        unlocked = recordWin(this.meta, run.tier);
+        if (!this.meta.seenCutscenes.includes('sting')) this.meta.seenCutscenes.push('sting');
+        if (unlocked !== null) this.tier = unlocked;
+      }
       saveMeta(this.meta);
     }
-    this.resultInfo = { won, souls, newBest, cheated: run.cheated };
+    this.resultInfo = { won, souls, newBest, cheated: run.cheated, unlocked };
     this.go('results');
   }
 
@@ -590,6 +612,7 @@ class Game {
     this.r.time += 1 / 60;
     text(c, info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
     if (info.won) text(c, 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
+    if (info.unlocked !== null) text(c, `${tierLabel(info.unlocked)} UNLOCKED`, VW / 2, 180, 10, Math.floor(this.r.time * 3) % 2 ? TIERS[info.unlocked].color : '#fff', 'center', 12);
     const p = run.plan[Math.min(run.stage, run.plan.length - 1)];
     const rows: [string, string][] = [
       ['SCORE', String(run.score) + (info.newBest ? '  NEW BEST!' : '')],
@@ -716,7 +739,7 @@ class Game {
         case 4: s.sfx = Math.max(0, Math.min(1, Math.round((s.sfx + delta * 0.1) * 10) / 10)); break;
         case 5:
           if (this.input.confirm()) {
-            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...defaultMeta(), settings: keep }; this.cursor2 = 0; this.say('PROGRESS RESET'); }
+            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...defaultMeta(), settings: keep }; this.tier = 0; this.cursor2 = 0; this.say('PROGRESS RESET'); }
             else this.cursor2 = 1;
           }
           break;
