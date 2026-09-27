@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Run, actPips } from '../src/game/run';
-import { defaultMeta, migrateMeta, recordWin } from '../src/game/meta';
+import { defaultMeta, migrateMeta, newTierWaiting, recordWin } from '../src/game/meta';
 import { runCheat, type CheatCtx } from '../src/game/cheats';
 import { MAX_TIER, TIERS, gagFor, tierLabel, tierSouls, twistsFor } from '../src/data/tiers';
 
@@ -125,12 +125,14 @@ describe('save v2', () => {
     expect(m.tierWins).toEqual([0, 0, 0, 0, 0, 0]);
     expect(m.heatBest).toBe(0);
     expect(m.seenCutscenes).toEqual([]); // they still get the sting on their next win
+    expect(newTierWaiting(m)).toBe(true); // and the title shows the NEW banner until they try R1
     expect(m.souls).toBe(50);
     expect(m.perks).toEqual({ start_lives: 1 });
     expect(m.settings.crt).toBe(true);
   });
   it('migrates a v1 save without wins to R0', () => {
     expect(migrateMeta(v1(0) as never).tierUnlocked).toBe(0);
+    expect(newTierWaiting(migrateMeta(v1(0) as never))).toBe(false);
   });
   it('keeps v2 fields as they are', () => {
     const m = { ...defaultMeta(), tierUnlocked: 3, tierWins: [1, 1, 1, 0, 0, 0], seenCutscenes: ['sting'] };

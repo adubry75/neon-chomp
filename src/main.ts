@@ -4,10 +4,10 @@ import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
 import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
-import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
+import { CUTSCENE_LEN, drawCutscene, skipAfter, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
-import { META_ITEMS, defaultMeta, loadMeta, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { META_ITEMS, defaultMeta, loadMeta, newTierWaiting, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { TIERS, actColor, gagFor, tierLabel, tierSouls } from './data/tiers';
 import { HEAT_BY_ID, HEAT_RULES, HEAT_SKINS, MAX_HEAT, heatPoints, heatSoulMult } from './data/heat';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
@@ -161,7 +161,7 @@ class Game {
     if (chase) { c.save(); c.fillStyle = '#fff4e0'; c.shadowColor = '#fff'; c.shadowBlur = 14; c.beginPath(); c.arc(VW - 40, y, 7, 0, Math.PI * 2); c.fill(); c.restore(); }
 
     const entries: [string, () => void][] = [
-      ['SOLO RUN', () => this.startSolo()],
+      ['SOLO RUN', () => { this.markTierStarted(); this.startSolo(); }],
       ['CO-OP RUN  (1-4P)', () => this.openLobby('coop')],
       ...(this.meta.tierUnlocked >= 2 ? [[`HEAT  ${this.activeHeat().length ? heatPoints(this.activeHeat()) : 'OFF'}`, () => this.go('heat')] as [string, () => void]] : []),
       ['CHOMP ROYALE  (2-4P)', () => this.openLobby('royale')],
@@ -178,6 +178,11 @@ class Game {
       if (d === RIGHT) { this.tier = (this.tier + 1) % n; this.audio.ui('move'); }
       text(c, `◀  ${tierLabel(this.tier)}  ▶`, VW / 2, 345, 11, TIERS[this.tier].color, 'center', 10);
     }
+    if (newTierWaiting(this.meta)) {
+      const pulse = Math.floor(t * 3) % 2 === 0;
+      text(c, `NEW! ${tierLabel(this.meta.tierUnlocked)} UNLOCKED`, VW / 2, 272, 12, pulse ? '#ffe600' : '#ff2df0', 'center', pulse ? 14 : 6);
+      if (this.cursor > 1) text(c, 'PICK IT ON SOLO RUN OR CO-OP RUN WITH LEFT / RIGHT', VW / 2, 345, 7, '#8f86c9', 'center', 0);
+    }
     items.forEach((s, i) => {
       const sel = i === this.cursor;
       const yy = 380 + i * 46;
@@ -191,6 +196,11 @@ class Game {
       this.audio.ui('select');
       entries[this.cursor]?.[1]();
     }
+  }
+
+  /** Starting a run from the menu on a tier counts as having tried it (the NEW banner goes away). */
+  markTierStarted() {
+    if (this.tier > this.meta.tierStarted) { this.meta.tierStarted = this.tier; saveMeta(this.meta); }
   }
 
   /** Heat rules picked and still unlocked (a progress reset can lock them again). */
@@ -276,7 +286,7 @@ class Game {
   }
 
   launchLobby() {
-    if (this.lobbyMode === 'coop') this.startRun(this.players, undefined, 0, this.tier);
+    if (this.lobbyMode === 'coop') { this.markTierStarted(); this.startRun(this.players, undefined, 0, this.tier); }
     else if (this.lobbyMode === 'royale') this.startRoyale();
     else { this.squadRound = 0; this.squadTotals = {}; this.startSquad(); }
   }
@@ -330,7 +340,7 @@ class Game {
     this.r.time += dt;
     const id = this.cutQueue[0];
     if (id) drawCutscene(this.r.ctx, id, this.sceneT);
-    const skip = this.sceneT > 0.3 && this.input.anyPressed();
+    const skip = !!id && this.sceneT > skipAfter(id) && this.input.anyPressed();
     if (id && this.sceneT < CUTSCENE_LEN[id] && !skip) return;
     this.cutQueue.shift();
     this.sceneT = 0;
@@ -668,7 +678,8 @@ class Game {
     const finale = info.won && run.twists.evilPac;
     text(c, finale ? 'YOU BEAT YOURSELF!' : info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
     if (info.won) text(c, finale ? 'THE GLITCH IS GONE. FOR REAL THIS TIME.' : 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
-    if (info.unlocked !== null) text(c, `${tierLabel(info.unlocked)} UNLOCKED`, VW / 2, 180, 10, Math.floor(this.r.time * 3) % 2 ? TIERS[info.unlocked].color : '#fff', 'center', 12);
+    if (info.unlocked !== null) text(c, 'PICK IT ON THE TITLE SCREEN: LEFT / RIGHT ON SOLO RUN', VW / 2, 190, 7, '#8f86c9', 'center', 0);
+    if (info.unlocked !== null) text(c, `${tierLabel(info.unlocked)} UNLOCKED`, VW / 2, 172, 10, Math.floor(this.r.time * 3) % 2 ? TIERS[info.unlocked].color : '#fff', 'center', 12);
     const p = run.plan[Math.min(run.stage, run.plan.length - 1)];
     const rows: [string, string][] = [
       ['SCORE', String(run.score) + (info.newBest ? '  NEW BEST!' : '')],
@@ -691,9 +702,11 @@ class Game {
     if (info.cheated) text(c, 'CHEATED · NOT SAVED', VW / 2, 620, 16, '#ff5c7a', 'center', 16);
     else text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
     c.restore();
-    text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
-    if (this.sceneT > 1) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);
-    if (this.sceneT > 1 && (this.input.confirm() || this.input.back())) { this.audio.ui('select'); this.go('title'); }
+    if (info.cheated && info.won) text(c, "CHEATED RUNS DON'T UNLOCK REINCARNATIONS", VW / 2, 660, 8, '#ff5c7a', 'center', 0);
+    else text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
+    const wait = info.unlocked !== null ? 2 : 1;
+    if (this.sceneT > wait) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);
+    if (this.sceneT > wait && (this.input.confirm() || this.input.back())) { this.audio.ui('select'); this.go('title'); }
   }
 
   versusResults() {

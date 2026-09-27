@@ -19,6 +19,8 @@ export interface MetaSave {
   seenCutscenes: string[];
   /** Heat rules switched on for the next run. */
   heatPicked: string[];
+  /** Highest tier the player has started a run on (drives the title's NEW banner). */
+  tierStarted: number;
   unlockedFruits: FruitId[];
   perks: Record<string, number>;
   skin: string;
@@ -29,7 +31,7 @@ const KEY = 'neon-chomp-save-v1';
 
 export const defaultMeta = (): MetaSave => ({
   v: 2, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0,
-  tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [], heatPicked: [],
+  tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [], heatPicked: [], tierStarted: 0,
   unlockedFruits: [], perks: {}, skin: '#ffe600',
   settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true },
 });
@@ -49,6 +51,9 @@ export function migrateMeta(raw: Partial<Omit<MetaSave, 'v'>> & { v?: number }):
   if ((raw.v ?? 1) < 2) m.tierUnlocked = (raw.wins ?? 0) > 0 ? 1 : 0;
   return m;
 }
+
+/** A reincarnation tier is unlocked that the player hasn't tried yet. */
+export const newTierWaiting = (m: MetaSave) => m.tierUnlocked > m.tierStarted;
 
 export function loadMeta(): MetaSave {
   try {
