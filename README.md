@@ -20,7 +20,7 @@ npm run build:single   # → dist/neon-chomp.html, ONE self-contained file (JS i
 `build:single` runs `scripts/build-single.mjs`, which builds with Vite and then inlines the JS bundle into an HTML shell. The only external request is the Google Fonts stylesheet for "Press Start 2P" (it falls back to monospace when offline).
 
 ## Debug URLs
-- `?auto=run&seed=123&stage=N`: jump straight into a run. `stage` is a 0-based index into the run plan (5 stages per act, and index 4 of each act is the boss). With the current plan, 4 = Mega Blinky, 9 = Train King, 14 = Maze Eater.
+- `?auto=run&seed=123&stage=N`: jump straight into a run. `stage` is a 0-based index into the run plan (5 stages per act, and index 4 of each act is the boss). With the current plan, 4 = Mega Blinky, 9 = Train King, 14 = Maze Eater. Add `&tier=N` (0-5) to start on a reincarnation tier.
 - `?auto=royale` (4 players) and `?auto=squad` (3 players): jump into the versus modes.
 - The console exposes `__game`, e.g. `__game.world.applyFruit(__game.world.pacs[0], 'melon')`.
 
@@ -46,7 +46,8 @@ Press the backtick key (`` ` ``) to open it. The game pauses while it's open. En
 | `HELP` | List codes |
 | `GOD` | Toggle invincibility (lasts across stages) |
 | `LIVES n` / `COINS n` | Set lives / coins |
-| `STAGE n` | Jump to stage 1-15 (5 = Mega Blinky, 10 = Train King, 15 = Maze Eater) |
+| `STAGE n` | Jump to stage 1-N, where N is the number of stages in this run (5 = Mega Blinky, 10 = Train King, 15 = Maze Eater) |
+| `TIER n` | Restart the run on reincarnation tier 0-5 |
 | `CLEAR` | Win the current maze or boss |
 | `BOSSHP n` | Set boss hits / cars / cores left |
 | `FRUIT id` | Apply a fruit power (e.g. `FRUIT MELON`) |
@@ -56,7 +57,7 @@ Press the backtick key (`` ` ``) to open it. The game pauses while it's open. En
 | `SLOWMO` | Toggle half speed |
 
 ## Save data
-Meta progress (souls, unlocks, perks, skins, best score, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field. **If you change the save shape, bump the version and migrate in `loadMeta()`** so existing progress isn't lost.
+Meta progress (souls, unlocks, perks, skins, best score, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field, currently `2`. The key keeps its old `-v1` name so existing saves are found. v2 added `tierUnlocked`, `tierWins`, `heatBest` and `seenCutscenes`, and `migrateMeta()` upgrades v1 saves (a save with a win starts with R1 unlocked). **If you change the save shape, bump the version and migrate in `migrateMeta()`** so existing progress isn't lost.
 
 ## Layout
 - `src/sim/`: pure game simulation (no DOM). Runs a fixed 60 Hz step with a seeded RNG, so it is deterministic. `world.ts` is the core.
