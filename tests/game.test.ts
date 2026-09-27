@@ -5,10 +5,14 @@ import { runCheat, type CheatCtx } from '../src/game/cheats';
 import { MAX_TIER, TIERS, gagFor, tierLabel, tierSouls, twistsFor } from '../src/data/tiers';
 
 describe('actPips', () => {
+  const plan = new Run(1, [{ slot: 0, color: '#fff' }], defaultMeta()).plan;
   it('marks cleared, current, upcoming and boss', () => {
-    expect(actPips(2)).toEqual(['done', 'done', 'current', 'todo', 'boss']);
-    expect(actPips(4)).toEqual(['done', 'done', 'done', 'done', 'bossCurrent']);
-    expect(actPips(5)).toEqual(['current', 'todo', 'todo', 'todo', 'boss']);
+    expect(actPips(plan, 2)).toEqual(['done', 'done', 'current', 'todo', 'boss']);
+    expect(actPips(plan, 4)).toEqual(['done', 'done', 'done', 'done', 'bossCurrent']);
+    expect(actPips(plan, 5)).toEqual(['current', 'todo', 'todo', 'todo', 'boss']);
+  });
+  it('handles a one-stage act', () => {
+    expect(actPips([{ act: 0, boss: null }, { act: 1, boss: 'evil' }], 1)).toEqual(['bossCurrent']);
   });
 });
 
@@ -191,6 +195,13 @@ describe('run tier', () => {
     const strip = (s: { mazeSeed: unknown; modifiers: unknown; level: number; act: number }) => [s.mazeSeed, s.modifiers, s.level, s.act];
     const base = new Run(42, p, defaultMeta(), 0).plan.slice(0, 15).map(strip);
     for (let t = 0; t <= 5; t++) expect(new Run(42, p, defaultMeta(), t).plan.slice(0, 15).map(strip)).toEqual(base);
+  });
+  it('adds Act IV (4 de-rez mazes + the Null) from R3', () => {
+    expect(new Run(42, p, defaultMeta(), 2).plan.length).toBe(15);
+    const plan = new Run(42, p, defaultMeta(), 3).plan;
+    expect(plan.length).toBe(20);
+    expect(plan.slice(15, 19).every(s => s.act === 3 && s.modifiers[0] === 'derez' && s.modifiers.length === 2)).toBe(true);
+    expect(plan[19].boss).toBe('null');
   });
   it('swaps in Mega Blinky EX from R2', () => {
     expect(new Run(42, p, defaultMeta(), 1).plan[4].boss).toBe('mega');

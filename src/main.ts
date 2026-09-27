@@ -3,7 +3,7 @@ import { T, drawFruit, drawGhost, drawPac, panel, text, wrapText } from './rende
 import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
-import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
+import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
 import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
@@ -395,7 +395,7 @@ class Game {
       const boss = p.boss ? BOSS_INFO[p.boss] : null;
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
-        stageLabel: `${this.run.tier ? `R${this.run.tier} · ` : ''}ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
+        stageLabel: `${this.run.tier ? `R${this.run.tier} · ` : ''}${ACTS[p.act].split(' · ')[0]}`, pips: actPips(this.run.plan, this.run.stage),
         wallColor: boss ? boss.color : actColor(this.run.tier, p.act),
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
@@ -590,7 +590,7 @@ class Game {
     text(c, String(run.coins), VW / 2 - 26, 133, 13, '#ffd23d', 'left', 8);
     // next stage preview
     const boss = plan.boss ? BOSS_INFO[plan.boss] : null;
-    panel(c, 40, 160, VW - 80, 70, boss ? boss.color : ACT_COLORS[plan.act]);
+    panel(c, 40, 160, VW - 80, 70, boss ? boss.color : actColor(run.tier, plan.act));
     text(c, `NEXT: ${ACTS[plan.act]} · ${boss ? 'BOSS' : 'STAGE ' + (plan.index + 1) + '/' + (STAGES_PER_ACT - 1)}`, VW / 2, 182, 9, '#fff', 'center', 4);
     const modsTxt = boss ? boss.name : plan.modifiers.length ? plan.modifiers.map(m => MODIFIERS[m].name).join(' + ') : 'NO MODIFIERS';
     text(c, modsTxt, VW / 2, 208, 10, boss ? boss.color : plan.modifiers.length ? MODIFIERS[plan.modifiers[0]].color : '#8fa0ff', 'center', 8);

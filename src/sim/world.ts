@@ -6,14 +6,15 @@ import { SCATTER, chaseTarget, chooseDir, type GhostKind } from './ghostAI';
 import { levelParams, type LevelParams } from '../data/levels';
 import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
-import type { Dozer, EvilBoss, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
+import type { DerezGroup, Dozer, EvilBoss, NullBoss, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
 import { resetEvil, setupEvil, updateEvil } from './bosses/evil';
 import { resetMegas, setupMega, updateMegas } from './bosses/mega';
+import { eatKey, resetNull, setupNull, updateNull } from './bosses/null';
 import { NO_TWISTS, type Twists } from '../data/tiers';
-import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
+import { ICE_SLIDE, setupConveyors, setupDerez, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
-export type BossId = 'mega' | 'mega2' | 'train' | 'eater' | 'evil';
+export type BossId = 'mega' | 'mega2' | 'train' | 'eater' | 'null' | 'evil';
 
 export interface PlayerInfo { slot: number; color: string }
 export interface PlayerInput { dir: Dir; action: boolean }
@@ -43,6 +44,8 @@ export const GHOST_COLORS: Record<GhostKind, string> = {
 };
 
 const EXTRA_LIFE_EVERY = 25000;
+/** De-rez cycle: walls stay solid, then half of them dissolve; the last DEREZ_WARN before reforming flickers. */
+export const DEREZ_SOLID = 5, DEREZ_OPEN = 4, DEREZ_WARN = 1;
 /** Phantom cycle: solid (the last PHANTOM_WARN of it flickers), then phasing. */
 export const PHANTOM_SOLID = 6.4, PHANTOM_WARN = 0.9, PHANTOM_PHASE = 2.2;
 const FRUIT_LIFETIME = 10;
@@ -72,6 +75,9 @@ export class World {
   teleporters: Teleporter[] = [];
   gates: Gate[] = [];
   gateT = 6;
+  /** De-rez wall plugs (open = dissolved into floor). */
+  derez: DerezGroup[] = [];
+  derezT = DEREZ_SOLID;
   inputs: PlayerInput[] = [];
   prevAction: boolean[] = [];
   events: GameEvent[] = [];
@@ -106,6 +112,7 @@ export class World {
   coresLeft = 0;
   bossDefeated = false;
   evil: EvilBoss | null = null;
+  nullBoss: NullBoss | null = null;
   /** P1's position every play tick (newest last), for Evil Pac. */
   trail: Vec[] = [];
   /** Cheat: main pacs can't be hurt. */
@@ -137,6 +144,7 @@ export class World {
     if (mods.includes('conveyor')) this.conveyor = setupConveyors(m, this.rng);
     if (mods.includes('teleport')) this.teleporters = setupTeleporters(m, this.rng);
     if (mods.includes('gates')) this.gates = setupGates(m, this.rng);
+    if (mods.includes('derez')) this.derez = setupDerez(m, this.rng);
     if (mods.includes('ghostTrain')) this.dozers = setupDozers(m, this.rng, 8);
 
     this.spawnPacs();
@@ -195,6 +203,7 @@ export class World {
       c.boss === 'mega' || c.boss === 'mega2' ? ['blinky', 'pinky'] :
       c.boss === 'train' ? ['blinky', 'pinky', 'inky'] :
       c.boss === 'evil' ? [] :
+      c.boss === 'null' ? ['blinky', 'inky'] :
       c.mode === 'royale' ? ['blinky', 'pinky', 'inky'] :
       ['blinky', 'pinky', 'inky', 'clyde'];
     if (c.mode === 'run' && this.mods.hunted && !c.boss) kinds.push('stalker');
@@ -235,6 +244,8 @@ export class World {
       this.placeCore();
     } else if (b === 'evil') {
       this.evil = setupEvil(this);
+    } else if (b === 'null') {
+      this.nullBoss = setupNull(this);
     }
   }
 
@@ -274,6 +285,7 @@ export class World {
     if (this.megas.length) resetMegas(this);
     this.trail = [];
     if (this.evil) resetEvil(this);
+    if (this.nullBoss) resetNull(this);
   }
 
   private safeSpawn(): Vec {
@@ -341,6 +353,7 @@ export class World {
     updateMegas(this);
     this.updateEater();
     updateEvil(this);
+    updateNull(this);
     this.collide();
     this.checkEnd();
   }
@@ -398,6 +411,8 @@ export class World {
       }
     }
 
+    if (this.derez.length) this.updateDerez();
+
     // house release on idle
     if (this.idleT > this.params.idleRelease) {
       const g = this.preferredHouseGhost();
@@ -410,11 +425,45 @@ export class World {
     }
   }
 
+  /** Swap in a new layout mid-stage (the Null boss). Everything on the board is snapped onto the new floor. */
+  rewriteMaze(next: Maze) {
+    this.maze = next.clone();
+    this.pristine = next.clone();
+    this.fire.fill(0); this.powerRespawn = []; this.fruit = null; this.peels = [];
+    const tiles = this.maze.openTiles();
+    const snap = (a: { x: number; y: number }) => {
+      let best = tiles[0], bd = Infinity;
+      for (const t of tiles) { const d = dist2(t.x + 0.5, t.y + 0.5, a.x, a.y); if (d < bd) { bd = d; best = t; } }
+      a.x = best.x + 0.5; a.y = best.y + 0.5;
+    };
+    for (const p of this.pacs) if (p.state !== 'out') { snap(p); p.invulnT = Math.max(p.invulnT, 1.5); p.iceSlide = 0; }
+    for (const g of this.ghosts) if (g.state === 'active' || g.state === 'eyes') { snap(g); g.phasing = false; }
+    this.emit({ t: 'rewrite' });
+  }
+
   private recordTrail() {
     const p = this.mainPacs[0];
     if (!p || p.state !== 'alive') return;
     this.trail.push({ x: p.x, y: p.y });
     if (this.trail.length > 600) this.trail.splice(0, this.trail.length - 600);
+  }
+
+  private updateDerez() {
+    this.derezT -= TICK;
+    if (this.derezT > 0) return;
+    const m = this.maze;
+    const open = this.derez.filter(d => d.open);
+    if (open.length) {
+      if (open.some(d => d.tiles.some(t => this.occupied(t.x, t.y)))) { this.derezT = 0.3; return; }
+      for (const d of open) { d.open = false; for (const t of d.tiles) m.terrain[t.y * m.w + t.x] = T_WALL; }
+      this.derezT = DEREZ_SOLID;
+      this.emit({ t: 'rezIn' });
+    } else {
+      const order = this.rng.shuffle([...this.derez]);
+      for (const d of order.slice(0, Math.ceil(order.length / 2))) { d.open = true; for (const t of d.tiles) m.terrain[t.y * m.w + t.x] = T_OPEN; }
+      this.derezT = DEREZ_OPEN;
+      this.emit({ t: 'derez' });
+    }
   }
 
   private occupied(tx: number, ty: number) {
@@ -646,7 +695,8 @@ export class World {
       this.addCoins(1);
       this.emit({ t: 'coin', x, y });
     } else if (it === I_CORE) {
-      this.eatCore(p, x, y);
+      if (this.nullBoss) eatKey(this, p, x, y);
+      else this.eatCore(p, x, y);
     }
   }
 
@@ -1245,6 +1295,7 @@ export class World {
       return true;
     }
     if (this.cfg.boss === 'eater') { this.coresLeft = Math.max(1, Math.min(3, n)); return true; }
+    if (this.nullBoss) { this.nullBoss.hp = Math.max(1, Math.min(this.nullBoss.maxHp, n)); return true; }
     if (this.evil) { this.evil.hp = Math.max(1, Math.min(this.evil.maxHp, n)); this.evil.phase = this.evil.maxHp - this.evil.hp; return true; }
     return false;
   }

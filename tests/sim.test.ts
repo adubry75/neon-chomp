@@ -122,9 +122,9 @@ describe('world', () => {
     expect(w.dotsEaten).toBeGreaterThan(10);
   });
   it('runs every modifier and boss without throwing', () => {
-    const mods = ['blackout', 'ice', 'conveyor', 'teleport', 'gates', 'mirror', 'ghostTrain'] as const;
+    const mods = ['blackout', 'ice', 'conveyor', 'teleport', 'gates', 'mirror', 'ghostTrain', 'derez'] as const;
     for (const mod of mods) simulate(3, 3000, { ...cfg(3), maze: generateMaze(99), modifiers: [mod] });
-    for (const boss of ['mega', 'train', 'eater', 'evil'] as const) simulate(5, 4000, { ...cfg(5), boss });
+    for (const boss of ['mega', 'mega2', 'train', 'eater', 'null', 'evil'] as const) simulate(5, 4000, { ...cfg(5), boss });
     simulate(9, 4000, { ...cfg(9), mode: 'royale', players: [0, 1, 2, 3].map(s => ({ slot: s, color: '#fff' })) });
     simulate(9, 4000, { ...cfg(9), mode: 'squad', squadPac: 0, ghostPlayers: [1, 2], players: [0, 1, 2].map(s => ({ slot: s, color: '#fff' })) });
   });
@@ -395,5 +395,68 @@ describe('R2', () => {
     const elites = [1, 2, 3, 4, 5, 6].flatMap(s => new World({ ...cfg(s), mods, level: 10 }).ghosts.filter(g => g.elite));
     expect(elites.length).toBeGreaterThan(0);
     expect(elites.every(g => g.elite === 'phantom')).toBe(true);
+  });
+});
+
+describe('R3', () => {
+  it('de-rez picks mirrored thin walls, opens half of them, and never reforms on top of anything', () => {
+    for (const seed of [11, 22, 33, 44]) {
+      const w = new World({ ...cfg(seed), maze: generateMaze(seed * 13), modifiers: ['derez'] });
+      w.phase = 'play';
+      expect(w.derez.length).toBeGreaterThanOrEqual(3);
+      for (const d of w.derez) for (const t of d.tiles) expect(w.maze.terrainAt(t.x, t.y)).toBe(1);
+      let sawOpen = false;
+      const rng = new Rng(seed);
+      for (let i = 0; i < 2400; i++) {
+        w.pacs[0].invulnT = 1; w.phase = 'play';
+        if (i % 30 === 0) w.setInput(0, rng.int(4) as 0, false);
+        w.update();
+        const open = w.derez.filter(d => d.open);
+        if (open.length) { sawOpen = true; expect(open.length).toBeLessThan(w.derez.length); }
+        // nothing may ever be standing inside a solid wall
+        for (const p of w.pacs) expect(w.maze.terrainAt(Math.floor(p.x), Math.floor(p.y))).not.toBe(1);
+        for (const g of w.ghosts) if (g.state === 'active' && !g.phasing) expect(w.maze.terrainAt(Math.floor(g.x), Math.floor(g.y))).not.toBe(1);
+      }
+      expect(sawOpen).toBe(true);
+    }
+  });
+  it('the Null needs its keys eaten before it can be hit, and rewrites the maze after each hit', () => {
+    const w = new World({ ...cfg(5), maze: generateMaze(99), boss: 'null', level: 17 });
+    w.phase = 'play';
+    const b = w.nullBoss!;
+    const p = w.pacs[0];
+    // touching it while shielded hurts
+    p.x = b.x; p.y = b.y; p.invulnT = 0; w.update();
+    expect(w.phase).toBe('dying');
+    w.phase = 'play';
+    for (let hit = 0; hit < 3; hit++) {
+      const before = w.maze;
+      for (let k = 0; k < 4; k++) {
+        const i = w.maze.items.indexOf(4);
+        expect(i).toBeGreaterThanOrEqual(0);
+        w.phase = 'play'; w.hitStop = 0; p.state = 'alive'; p.invulnT = 5;
+        p.x = (i % w.maze.w) + 0.5; p.y = Math.floor(i / w.maze.w) + 0.5;
+        w.update();
+      }
+      expect(b.exposedT).toBeGreaterThan(0);
+      w.hitStop = 0; p.x = b.x; p.y = b.y; w.update();
+      expect(b.hp).toBe(2 - hit);
+      if (hit < 2) expect(w.maze).not.toBe(before);
+    }
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('the Null shields up again if you are too slow', () => {
+    const w = new World({ ...cfg(5), maze: generateMaze(99), boss: 'null', level: 17 });
+    w.phase = 'play';
+    const b = w.nullBoss!;
+    b.keysLeft = 1;
+    const i = w.maze.items.indexOf(4);
+    const p = w.pacs[0]; p.invulnT = 99; p.x = (i % w.maze.w) + 0.5; p.y = Math.floor(i / w.maze.w) + 0.5;
+    w.update();
+    expect(b.exposedT).toBeGreaterThan(0);
+    p.x = 1.5; p.y = 1.5;
+    for (let k = 0; k < 60 * 7; k++) { p.invulnT = 99; w.phase = 'play'; w.update(); }
+    expect(b.exposedT).toBeLessThanOrEqual(0);
+    expect(b.keysLeft).toBe(4);
   });
 });

@@ -40,9 +40,9 @@ const PALETTES = [
   ['#2d7bff', '#ff2df0', '#39ffb4', '#7d8cff', '#b45cff'],
   ['#ff8a3d', '#ff3d7a', '#ffd23d', '#7d8cff', '#b45cff'],
   ['#5ce1ff', '#7d8cff', '#39ffb4', '#7d8cff', '#b45cff'],
-  ['#b45cff', '#ff2df0', '#5ce1ff', '#e0e0ff', '#b45cff'],
-  ['#ff5cf0', '#ffd23d', '#39ffb4', '#e0e0ff', '#b45cff'],
-  ['#ff2d55', '#b45cff', '#ff8a3d', '#e0e0ff', '#ff2d55'],
+  ['#b45cff', '#ff2df0', '#5ce1ff', '#8a7dff', '#b45cff'],
+  ['#ff5cf0', '#ffd23d', '#39ffb4', '#5cd6ff', '#b45cff'],
+  ['#ff2d55', '#b45cff', '#ff8a3d', '#8a7dff', '#ff2d55'],
 ];
 export const actColor = (tier: number, act: number) => PALETTES[tier][act];
 

@@ -1,5 +1,5 @@
 import { I_COIN, I_CORE, I_PELLET, I_POWER, T_DOOR, type Maze } from '../sim/maze';
-import { PHANTOM_WARN, type World } from '../sim/world';
+import { DEREZ_WARN, PHANTOM_WARN, type World } from '../sim/world';
 import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
@@ -211,6 +211,11 @@ export class Renderer {
       case 'phaseHop': this.burst(x, y, '#b6ff3d', 14, 6, 'spark', 0.35); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#b6ff3d', 2, 0.4); this.burst(e.x2, e.y2!, '#b6ff3d', 14, 6, 'spark', 0.35); } break;
       case 'phaseIn': this.burst(x, y, e.c ?? '#fff', 8, 3, 'dot', 0.4, 2); break;
       case 'megaSplit': this.burst(x, y, '#ff2d55', 50, 12, 'square', 0.8, 4); this.popup(x, y - 2, 'HE SPLIT!', '#ff5c7a', 18, 1.6); this.addShake(12); this.flash = 0.3; this.flashColor = '#ff2d55'; break;
+      case 'nullKey': this.ring(x, y, '#e0b0ff', 6, 0.6); this.burst(x, y, '#e0b0ff', 24, 8, 'star', 0.8, 3); this.popup(x, y - 1, 'KEY! ' + e.v, '#e0b0ff', 11); if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST KEY!' : `${e.s} KEYS LEFT`, '#ffe600', 16, 1.4); break;
+      case 'nullExposed': this.ring(x, y, '#ff2d55', 12, 0.8); this.popup(14, 11, 'THE NULL IS EXPOSED!', '#ff2d55', 16, 1.8); this.addShake(8); this.flash = 0.3; this.flashColor = '#ff2d55'; break;
+      case 'nullShield': this.popup(x, y - 2, 'SHIELD UP', '#e0e0ff', 12, 1.2); break;
+      case 'rewrite': this.popup(14, 15, 'REWRITE!', '#e0e0ff', 20, 1.6); this.flash = 0.6; this.flashColor = '#e0e0ff'; this.addShake(14); break;
+      case 'derez': this.flash = 0.06; this.flashColor = '#7d8cff'; break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -375,6 +380,23 @@ export class Renderer {
         c.restore();
       }
     }
+    // de-rez: dissolved walls are cut out of the wall layer; they flicker before reforming
+    for (const d of w.derez) for (const tile of d.tiles) {
+      const x = tile.x * T, y = tile.y * T;
+      c.save();
+      if (d.open) {
+        const warn = w.derezT < DEREZ_WARN && Math.floor(this.time * 10) % 2 === 0;
+        c.fillStyle = warn ? 'rgba(125,140,255,0.45)' : '#090220';
+        c.fillRect(x - 1, y - 1, T + 2, T + 2);
+        c.fillStyle = 'rgba(125,140,255,0.55)';
+        for (let k = 0; k < 4; k++) c.fillRect(x + ((k * 7 + Math.floor(this.time * 20)) % T), y + ((k * 11 + Math.floor(this.time * 13)) % T), 3, 2);
+      } else if (w.derezT < DEREZ_WARN) {
+        // about to dissolve: a scan of dashes over the wall
+        c.strokeStyle = '#7d8cff'; c.globalAlpha = 0.5 + 0.5 * Math.sin(this.time * 30); c.setLineDash([2, 3]); c.lineWidth = 1.5;
+        c.strokeRect(x + 3, y + 3, T - 6, T - 6);
+      }
+      c.restore();
+    }
     // gates
     for (const g of w.gates) {
       const x = g.tx * T, y = g.ty * T;
@@ -508,6 +530,7 @@ export class Renderer {
       }
     }
     if (w.evil && w.evil.hp > 0) this.drawEvil(w, flashing);
+    if (w.nullBoss && w.nullBoss.hp > 0 && !w.bossDefeated) this.drawNull(w);
     // pacs
     for (const p of w.pacs) this.drawPacActor(w, p);
     // dying pac
@@ -517,6 +540,39 @@ export class Renderer {
       if (k < 1) drawPac(c, p.x * T, p.y * T, T * 0.48, UP, 0.08 + k * 0.92, p.color);
       if (k >= 0.98 && Math.random() < 0.4) this.burst(p.x, p.y, p.color, 6, 6, 'spark', 0.4);
     }
+  }
+
+  /** The Null: a spinning glitch cube with one orbiting shard per key still in the maze. Exposed = cracked open. */
+  private drawNull(w: World) {
+    const c = this.ctx, b = w.nullBoss!, t = this.time;
+    const x = b.x * T, y = b.y * T, s = T * 1.2;
+    const exposed = b.exposedT > 0;
+    const blink = exposed && b.exposedT < 2 && Math.floor(t * 10) % 2 === 0;
+    c.save();
+    c.translate(x + (Math.random() < 0.1 ? (Math.random() - 0.5) * 8 : 0), y);
+    c.rotate(b.spin);
+    c.shadowColor = exposed ? '#ff2d55' : '#e0e0ff'; c.shadowBlur = 24;
+    c.fillStyle = exposed ? (blink ? '#fff' : '#2a0010') : '#12101f';
+    c.strokeStyle = exposed ? '#ff2d55' : '#e0e0ff'; c.lineWidth = 3;
+    c.fillRect(-s, -s, s * 2, s * 2); c.strokeRect(-s, -s, s * 2, s * 2);
+    if (exposed) {
+      c.strokeStyle = '#fff'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(-s, -s * 0.3); c.lineTo(-s * 0.2, s * 0.1); c.lineTo(s * 0.3, -s * 0.5); c.lineTo(s, s * 0.2); c.stroke();
+      c.fillStyle = '#ff2d55'; c.beginPath(); c.arc(0, 0, s * 0.35, 0, Math.PI * 2); c.fill();
+    } else {
+      c.fillStyle = '#e0e0ff';
+      for (let k = 0; k < 5; k++) c.fillRect(-s + ((k * 13 + Math.floor(t * 15)) % (s * 2)), -s + ((k * 29) % (s * 2)), 6, 3);
+    }
+    c.restore();
+    // shards still out there orbit the shield
+    for (let k = 0; k < b.keysLeft; k++) {
+      const a = t * 2 + (k / Math.max(1, b.keysLeft)) * Math.PI * 2;
+      c.save(); c.translate(x + Math.cos(a) * s * 1.8, y + Math.sin(a) * s * 1.8); c.rotate(t * 3);
+      c.fillStyle = '#f0d0ff'; c.shadowColor = '#b45cff'; c.shadowBlur = 12;
+      c.beginPath(); c.moveTo(0, -6); c.lineTo(5, 0); c.lineTo(0, 6); c.lineTo(-5, 0); c.closePath(); c.fill();
+      c.restore();
+    }
+    if (exposed) text(c, `${Math.ceil(b.exposedT)}`, x, y - s - 14, 10, '#ff2d55', 'center', 8);
   }
 
   /** Evil Pac, the path he's about to walk, and a warning where he'll glitch back in. */
@@ -816,6 +872,7 @@ export class Renderer {
       if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
     } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }
     else if (w.evil) { segs = w.evil.maxHp; left = Math.max(0, w.evil.hp); }
+    else if (w.nullBoss) { segs = w.nullBoss.maxHp; left = Math.max(0, w.nullBoss.hp); if (w.nullBoss.exposedT > 0 && !w.bossDefeated) label = 'EXPOSED!'; }
     if (!segs) return;
     const c = this.ctx;
     const bw = VW * 0.5, x0 = (VW - bw) / 2, y = 2.5 * T, gap = 3;

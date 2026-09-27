@@ -115,3 +115,51 @@ export function gagR2(c: Ctx, t: number) {
   if (t > 6.4 && t < 8) text(c, 'HA!', 220, py - 44, 14, '#ffe600', 'center', 10);
   if (t > 7) text(c, 'PRACTICE MAKES PERFECT...', VW / 2, 240, 12, Math.floor(t * 3) % 2 ? '#ff2d55' : '#b45cff', 'center', 12);
 }
+
+/** R3 (Act III→IV): the street glitches out under Pac and he drops into the Null Sector. The shadow peeks down after him. */
+export function gagR3(c: Ctx, t: number) {
+  const y = VH / 2 + 20, floorY = y + 26;
+  const holeX0 = 270, holeX1 = 410;
+  const open = t > 2.3;
+  // street with a hole
+  c.save(); c.strokeStyle = '#39ffb4'; c.globalAlpha = 0.6; c.lineWidth = 2; c.shadowColor = '#39ffb4'; c.shadowBlur = 10;
+  c.beginPath(); c.moveTo(0, floorY); c.lineTo(open ? holeX0 : VW, floorY); if (open) { c.moveTo(holeX1, floorY); c.lineTo(VW, floorY); } c.stroke();
+  c.restore();
+  if (t > 1.7 && !open) {
+    // crack
+    c.save(); c.strokeStyle = '#b45cff'; c.lineWidth = 2; c.shadowColor = '#b45cff'; c.shadowBlur = 8;
+    c.beginPath(); c.moveTo(holeX0 + 20, floorY); c.lineTo(330, floorY + 8); c.lineTo(350, floorY - 4); c.lineTo(390, floorY + 6); c.stroke(); c.restore();
+  }
+  if (open) {
+    // the void: a pit with streaks rushing up
+    const g = c.createLinearGradient(0, floorY, 0, VH);
+    g.addColorStop(0, 'rgba(180,92,255,0.35)'); g.addColorStop(1, 'rgba(10,0,20,1)');
+    c.fillStyle = g; c.fillRect(holeX0, floorY, holeX1 - holeX0, VH - floorY);
+    c.save(); c.fillStyle = '#b45cff';
+    for (let k = 0; k < 14; k++) { c.globalAlpha = 0.4; c.fillRect(holeX0 + ((k * 37) % (holeX1 - holeX0)), VH - ((t * 500 + k * 90) % (VH - floorY)), 2, 20); }
+    c.restore();
+  }
+  // pellets
+  c.save(); c.fillStyle = '#ffe9c4'; c.shadowColor = '#ffd9a0'; c.shadowBlur = 8;
+  for (let x = 30; x < VW; x += 32) if (x > Math.min(340, -40 + t * 170) + 10 && !(open && x > holeX0 && x < holeX1)) { c.beginPath(); c.arc(x, y, 3, 0, Math.PI * 2); c.fill(); }
+  c.restore();
+  // Pac walks to the middle, hangs in the air (cartoon rules), looks down, falls
+  const px = Math.min(340, -40 + t * 170);
+  if (t < 2.9) {
+    drawPac(c, px, y, 18, t > 2.4 ? DOWN : RIGHT, t > 2.4 ? 0.3 : 0.04 + 0.26 * Math.abs(Math.sin(t * 14)), '#ffe600');
+    if (t > 2.4) text(c, '!', px, y - 40, 18, '#ffe600', 'center', 10);
+  } else {
+    const ft = t - 2.9;
+    const fy = y + ft * ft * 420;
+    const spin = [UP, LEFT, DOWN, RIGHT] as const;
+    if (fy < VH + 30) drawPac(c, px, fy, 18 * Math.max(0.35, 1 - ft * 0.3), spin[Math.floor(ft * 12) % 4], 0.3, '#ffe600');
+    if (ft < 1.4) text(c, 'WAAAH!', px + 60, Math.min(fy, VH - 60) - 10, 9, '#ffe600', 'center', 6);
+  }
+  // the shadow peeks over the edge
+  if (t > 3.8 && t < 6.2) {
+    const peek = Math.min(1, (t - 3.8) / 0.5) * (t > 5.7 ? Math.max(0, 1 - (t - 5.7) / 0.5) : 1);
+    c.save(); c.beginPath(); c.rect(0, 0, VW, floorY - 2); c.clip();
+    drawShadowPac(c, holeX1 + 26, floorY + 16 - peek * 34, 16, LEFT, 0.35);
+    c.restore();
+  }
+}

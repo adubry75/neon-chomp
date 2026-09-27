@@ -71,6 +71,8 @@ export interface Fruit { id: FruitId; x: number; y: number; t: number }
 export interface Peel { tx: number; ty: number; t: number }
 export interface Teleporter { a: Vec; b: Vec; hue: number }
 export interface Gate { tx: number; ty: number; open: boolean }
+/** De-rez: a wall plug (and its mirror) that dissolves as one. */
+export interface DerezGroup { tiles: Vec[]; open: boolean }
 
 export interface MegaBoss {
   x: number; y: number; hp: number; maxHp: number; r: number;
@@ -79,6 +81,16 @@ export interface MegaBoss {
   half: boolean;
   /** R2+ variant that splits at half health. */
   remix: boolean;
+}
+
+/** Act IV boss: shielded until every key shard is eaten. */
+export interface NullBoss {
+  x: number; y: number; vx: number; vy: number;
+  hp: number; maxHp: number;
+  keysLeft: number;
+  /** Seconds left exposed (vulnerable); 0 = shielded. */
+  exposedT: number;
+  spin: number;
 }
 
 /** Final boss: follows P1's recorded path `delay` seconds behind, flees while P1 is powered. */
