@@ -14,7 +14,7 @@ import { NO_TWISTS, type Twists } from '../data/tiers';
 import { ICE_SLIDE, setupConveyors, setupDerez, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
-export type BossId = 'mega' | 'mega2' | 'train' | 'eater' | 'null' | 'evil';
+export type BossId = 'mega' | 'mega2' | 'train' | 'train2' | 'eater' | 'null' | 'evil';
 
 export interface PlayerInfo { slot: number; color: string }
 export interface PlayerInput { dir: Dir; action: boolean }
@@ -44,6 +44,8 @@ export const GHOST_COLORS: Record<GhostKind, string> = {
 };
 
 const EXTRA_LIFE_EVERY = 25000;
+/** Ghost memory: passes before a junction is learned. */
+export const LEARN_VISITS = 6;
 /** De-rez cycle: walls stay solid, then half of them dissolve; the last DEREZ_WARN before reforming flickers. */
 export const DEREZ_SOLID = 5, DEREZ_OPEN = 4, DEREZ_WARN = 1;
 /** Phantom cycle: solid (the last PHANTOM_WARN of it flickers), then phasing. */
@@ -113,7 +115,12 @@ export class World {
   bossDefeated = false;
   evil: EvilBoss | null = null;
   nullBoss: NullBoss | null = null;
-  /** P1's position every play tick (newest last), for Evil Pac. */
+  /** Ghost memory (R4): passes per junction tile, and the junctions the ghosts have learned. */
+  junctionVisits = new Map<number, number>();
+  learned: number[] = [];
+  /** Rewind upgrade uses left in this maze. */
+  rewindsLeft: number;
+  /** P1's position every play tick (newest last), for Evil Pac and Rewind. */
   trail: Vec[] = [];
   /** Cheat: main pacs can't be hurt. */
   god = false;
@@ -133,6 +140,7 @@ export class World {
     this.score = cfg.scoreBase;
     this.lives = cfg.lives;
     this.shieldsLeft = cfg.mods.shields;
+    this.rewindsLeft = cfg.mods.rewinds;
     this.fire = new Float32Array(this.maze.w * this.maze.h);
     this.nextFruitAt = Math.round(60 / cfg.mods.fruitRate);
     this.royaleT = cfg.royaleTime ?? 150;
@@ -201,7 +209,7 @@ export class World {
     const hx = m.houseCenter.x, hy = m.houseCenter.y;
     const kinds: GhostKind[] =
       c.boss === 'mega' || c.boss === 'mega2' ? ['blinky', 'pinky'] :
-      c.boss === 'train' ? ['blinky', 'pinky', 'inky'] :
+      c.boss === 'train' || c.boss === 'train2' ? ['blinky', 'pinky', 'inky'] :
       c.boss === 'evil' ? [] :
       c.boss === 'null' ? ['blinky', 'inky'] :
       c.mode === 'royale' ? ['blinky', 'pinky', 'inky'] :
@@ -233,9 +241,10 @@ export class World {
     const b = this.cfg.boss;
     if (b === 'mega' || b === 'mega2') {
       this.megas = setupMega(b === 'mega2');
-    } else if (b === 'train') {
+    } else if (b === 'train' || b === 'train2') {
       const king = this.ghosts[0];
       king.king = true; king.color = '#ffd23d';
+      if (b === 'train2') king.elite = 'phantom';
       const colors = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
       for (let i = 0; i < 12; i++) this.cars.push({ x: king.x, y: king.y, alive: true, color: colors[i % 4], wobble: i * 0.7 });
     } else if (b === 'eater') {
@@ -278,7 +287,7 @@ export class World {
     this.powerT = 0; this.freezeT = 0; this.frenzyT = 0;
     if (!this.mods.chainChomp) this.combo = 0;
     this.peels = [];
-    if (this.cfg.boss === 'train') {
+    if (this.cfg.boss === 'train' || this.cfg.boss === 'train2') {
       const king = this.ghosts.find(g => g.king);
       if (king) for (const c of this.cars) { c.x = king.x; c.y = king.y; }
     } else if (this.cars.length) this.disbandTrain();
@@ -526,6 +535,10 @@ export class World {
           this.emit({ t: 'peel', x: p.x, y: p.y });
         }
       }
+    } else if (p.kind === 'decoy') {
+      p.lifeT -= TICK;
+      if (p.lifeT <= 0) { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: '#8fd13a' }); }
+      return;
     } else if (p.kind === 'clone') {
       const owner = this.pacs.find(o => o.id === p.ownerId);
       if (!owner || owner.state !== 'alive' || !owner.fx.strawberry) { this.removePac(p); return; }
@@ -570,6 +583,7 @@ export class World {
     } else this.eatAt(p, tx, ty);
 
     if (tile !== p.lastTile) {
+      if (p === this.mainPacs[0]) this.learnJunction(tile);
       if (p.fx.cherry && p.lastTile >= 0) { this.addScore(p, 20); this.emit({ t: 'trail', x: p.x, y: p.y }); }
       p.lastTile = tile;
     }
@@ -591,6 +605,19 @@ export class World {
     p.x = m.wrapX(tx + DX[d] * k) + 0.5; p.y = ty + DY[d] * k + 0.5; p.dir = d;
     p.phaseCharges--;
     this.emit({ t: 'phaseHop', x: ox, y: oy, x2: p.x, y2: p.y, c: p.color });
+  }
+
+  /** Ghost memory: count P1's passes through junctions; busy ones become ambush spots. */
+  private learnJunction(tile: number) {
+    if (!this.twists.ghostMemory || this.cfg.mode !== 'run' || this.cfg.boss) return;
+    const m = this.maze, x = tile % m.w, y = (tile / m.w) | 0;
+    if (DIRS.filter(d => m.canGo(x, y, d, 'pac')).length < 3) return;
+    const n = (this.junctionVisits.get(tile) ?? 0) + 1;
+    this.junctionVisits.set(tile, n);
+    if (n >= LEARN_VISITS * this.mods.memorySlow && this.learned.length < 3 && !this.learned.includes(tile)) {
+      this.learned.push(tile);
+      this.emit({ t: 'learned', x: x + 0.5, y: y + 0.5 });
+    }
   }
 
   private endFx(p: Pac, k: FruitId) {
@@ -798,6 +825,7 @@ export class World {
         if (id === 'grapes') this.spawnMinis(p, dur);
         if (id === 'pineapple') p.dashCharges = 3;
         if (id === 'lime') p.phaseCharges = 2;
+        if (id === 'kiwi') this.spawnDecoy(p, dur);
         if (id === 'banana') p.peelT = 0.2;
       }
     }
@@ -813,6 +841,14 @@ export class World {
     c.dir = p.dir === LEFT ? RIGHT : p.dir === RIGHT ? LEFT : p.dir;
     if (!this.maze.walkable(Math.floor(c.x), Math.floor(c.y), 'pac')) { c.x = p.x; c.y = p.y; }
     this.pacs.push(c);
+  }
+
+  private spawnDecoy(p: Pac, dur: number) {
+    for (const o of this.pacs.filter(o => o.kind === 'decoy')) this.removePac(o);
+    const d = this.newPac(p.player, '#8fd13a', 'decoy');
+    d.ownerId = p.id; d.x = centerOf(p.x); d.y = centerOf(p.y); d.dir = p.dir; d.lifeT = dur;
+    this.pacs.push(d);
+    this.emit({ t: 'decoy', x: d.x, y: d.y });
   }
 
   private spawnMinis(p: Pac, dur: number) {
@@ -855,13 +891,29 @@ export class World {
     const tx = Math.floor(g.x), ty = Math.floor(g.y);
     const pac = this.nearestPac(g.x, g.y);
     if (!pac) return SCATTER[g.kind];
+    const decoy = this.pacs.find(o => o.kind === 'decoy');
+    if (decoy) return { x: Math.floor(decoy.x), y: Math.floor(decoy.y) };
     const elroy = g.kind === 'blinky' && this.elroy() > 0;
     if (g.kind === 'clyde' && this.mods.clydeFriend) return SCATTER.clyde;
     if (this.isScatter && !elroy && !g.king && !g.splinter) return SCATTER[g.kind];
+    const ambush = this.ambushFor(g, pac);
+    if (ambush) return ambush;
     const blinky = this.ghosts.find(o => o.kind === 'blinky' && o.state === 'active');
     const view = { tx: Math.floor(pac.x), ty: Math.floor(pac.y), dir: pac.dir };
     const kind: GhostKind = g.splinter || g.king ? 'blinky' : g.kind;
     return chaseTarget(kind, view, { x: tx, y: ty }, blinky ? { x: Math.floor(blinky.x), y: Math.floor(blinky.y) } : { x: tx, y: ty });
+  }
+
+  /** Ghost memory: Pinky waits at the learned junction nearest to Pac, Clyde at the second nearest (only when Pac is close to them). */
+  private ambushFor(g: Ghost, pac: Pac): Vec | null {
+    const slot = g.kind === 'pinky' ? 0 : g.kind === 'clyde' ? 1 : -1;
+    if (slot < 0 || !this.learned.length) return null;
+    const w = this.maze.w;
+    const spots = this.learned.map(i => ({ x: i % w, y: (i / w) | 0 }))
+      .map(s => ({ ...s, d: dist2(s.x + 0.5, s.y + 0.5, pac.x, pac.y) }))
+      .sort((a, b) => a.d - b.d);
+    const s = spots[slot];
+    return s && s.d <= 64 ? { x: s.x, y: s.y } : null;
   }
 
   ghostSpeed(g: Ghost): number {
@@ -1027,6 +1079,7 @@ export class World {
         if (g.state !== 'active' || p.state !== 'alive') continue;
         if (dist2(p.x, p.y, g.x, g.y) > r * r) continue;
         if (g.stunT > 0) continue;
+        if (p.kind === 'decoy') { if (!g.fright) { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: '#8fd13a' }); } continue; }
         if (this.freezeT > 0) { if (p.kind !== 'mini') this.shatter(g); continue; }
         if (p.kind === 'mini') continue;
         if (g.fright || (giant && !g.king)) { this.eatGhost(g, p); continue; }
@@ -1036,7 +1089,7 @@ export class World {
       }
       // train cars
       for (const c of this.cars) {
-        if (!c.alive || p.state !== 'alive' || p.kind === 'mini') continue;
+        if (!c.alive || p.state !== 'alive' || p.kind === 'mini' || p.kind === 'decoy') continue;
         if (dist2(p.x, p.y, c.x, c.y) > r * r) continue;
         if (this.freezeT > 0 || this.powerT > 0 || giant) {
           c.alive = false; this.combo++;
@@ -1133,6 +1186,15 @@ export class World {
     if (mode === 'run' && this.shieldsLeft > 0) {
       this.shieldsLeft--; p.invulnT = 2;
       this.emit({ t: 'shield', x: p.x, y: p.y });
+      return;
+    }
+    if (mode === 'run' && this.rewindsLeft > 0 && p === this.mainPacs[0] && this.trail.length) {
+      this.rewindsLeft--;
+      const i = Math.max(0, this.trail.length - 1 - 180);
+      const pt = this.trail[i];
+      this.emit({ t: 'rewind', x: p.x, y: p.y, x2: centerOf(pt.x), y2: centerOf(pt.y) });
+      p.x = centerOf(pt.x); p.y = centerOf(pt.y); p.desired = NONE; p.invulnT = 2; p.iceSlide = 0;
+      this.trail.length = i + 1;
       return;
     }
     if (mode === 'squad' && byHuman >= 0) this.ghostScores[byHuman] = (this.ghostScores[byHuman] ?? 0) + 1000;
@@ -1289,7 +1351,7 @@ export class World {
   /** Set the boss's remaining health (hits, cars or cores). False when there's no boss. */
   cheatBossHp(n: number): boolean {
     if (this.megas.length) { for (const b of this.megas) b.hp = Math.max(1, Math.min(b.maxHp, n)); return true; }
-    if (this.cfg.boss === 'train') {
+    if (this.cfg.boss === 'train' || this.cfg.boss === 'train2') {
       let keep = Math.max(0, n);
       for (const c of this.cars) if (c.alive) { if (keep > 0) keep--; else c.alive = false; }
       return true;

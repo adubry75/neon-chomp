@@ -2,7 +2,7 @@ import type { Dir, Vec } from './types';
 import type { GhostKind } from './ghostAI';
 import type { FruitId } from '../data/fruits';
 
-export type PacKind = 'main' | 'clone' | 'mini';
+export type PacKind = 'main' | 'clone' | 'mini' | 'decoy';
 export type PacState = 'alive' | 'bubble' | 'respawn' | 'out';
 
 export interface Pac {

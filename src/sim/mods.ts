@@ -33,6 +33,8 @@ export interface Mods {
   leanMaze: boolean;        // heat: only 2 power pellets per maze
   ironGhosts: boolean;      // heat: non-Blinky ghosts start shielded
   noLives: boolean;         // heat: the stand doesn't sell lives
+  rewinds: number;          // fatal hits per maze that rewind you 3s instead
+  memorySlow: number;       // ghost memory needs this many times the visits
 }
 
 export const defaultMods = (): Mods => ({
@@ -42,4 +44,5 @@ export const defaultMods = (): Mods => ({
   blackout: false, magnetRadius: 0, eliteChance: 0, comboCoins: 0, fruitStandChoices: 3, frightSlow: 1,
   powerGrace: 0, ghostTimeBonus: 0, fruitPower: 0,
   powerEcho: false, powerStun: 0, soulMult: 1, allPhantom: false, leanMaze: false, ironGhosts: false, noLives: false,
+  rewinds: 0, memorySlow: 1,
 });

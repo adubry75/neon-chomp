@@ -216,6 +216,9 @@ export class Renderer {
       case 'nullShield': this.popup(x, y - 2, 'SHIELD UP', '#e0e0ff', 12, 1.2); break;
       case 'rewrite': this.popup(14, 15, 'REWRITE!', '#e0e0ff', 20, 1.6); this.flash = 0.6; this.flashColor = '#e0e0ff'; this.addShake(14); break;
       case 'derez': this.flash = 0.06; this.flashColor = '#7d8cff'; break;
+      case 'learned': this.ring(x, y, '#ff2d55', 3, 0.7); this.popup(x, y - 1, 'THEY KNOW THIS SPOT', '#ff2d55', 9, 1.6); break;
+      case 'decoy': this.ring(x, y, '#8fd13a', 3, 0.6); this.popup(x, y - 1, 'DECOY!', '#8fd13a', 11, 1); break;
+      case 'rewind': this.burst(x, y, '#5ce1ff', 20, 7, 'spark', 0.4); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#5ce1ff', 4, 0.6); this.popup(e.x2, e.y2! - 1, 'REWIND!', '#5ce1ff', 13, 1.3); } this.flash = 0.25; this.flashColor = '#5ce1ff'; this.addShake(5); break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -364,6 +367,16 @@ export class Renderer {
         }
         c.restore();
       }
+      c.restore();
+    }
+    // ghost memory: red crosshairs on junctions the ghosts have learned
+    for (const i of w.learned) {
+      const x = (i % w.maze.w) * T + T / 2, y = ((i / w.maze.w) | 0) * T + T / 2;
+      const k = 0.5 + 0.5 * Math.sin(this.time * 4 + i);
+      c.save(); c.strokeStyle = '#ff2d55'; c.shadowColor = '#ff2d55'; c.shadowBlur = 8; c.lineWidth = 1.5; c.globalAlpha = 0.45 + 0.35 * k;
+      c.beginPath(); c.arc(x, y, T * 0.42, 0, Math.PI * 2);
+      c.moveTo(x - T * 0.6, y); c.lineTo(x - T * 0.2, y); c.moveTo(x + T * 0.2, y); c.lineTo(x + T * 0.6, y);
+      c.moveTo(x, y - T * 0.6); c.lineTo(x, y - T * 0.2); c.moveTo(x, y + T * 0.2); c.lineTo(x, y + T * 0.6); c.stroke();
       c.restore();
     }
     // teleporters
@@ -619,6 +632,12 @@ export class Renderer {
     if (w.phase === 'dying' && w.dyingPac === p) return;
     const giant = !!p.fx.melon;
     const r = T * (p.kind === 'mini' ? 0.26 : giant ? 1.35 : 0.48);
+    if (p.kind === 'decoy') {
+      const x = p.x * T, y = p.y * T, blink = p.lifeT < 1.5 && Math.floor(t * 8) % 2 === 0;
+      if (!blink) drawPac(c, x, y, r, p.dir === NONE ? LEFT : p.dir, 0.15 + 0.1 * Math.sin(t * 6), '#8fd13a', 14, 0.75);
+      c.save(); c.strokeStyle = '#8fd13a'; c.globalAlpha = 0.6; c.setLineDash([3, 3]); c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, r + 5, 0, Math.PI * 2); c.stroke(); c.restore();
+      return;
+    }
     const x = p.x * T, y = p.y * T;
     // trails
     const fast = p.fx.cherry || p.dashT > 0 || giant;
@@ -867,7 +886,7 @@ export class Renderer {
     if (!boss) return;
     let label = boss.name, segs = 0, left = 0;
     if (w.megas.length) { const h = megaHealth(w); segs = h.total; left = h.left; }
-    else if (w.cfg.boss === 'train') {
+    else if (w.cfg.boss === 'train' || w.cfg.boss === 'train2') {
       segs = 12; left = w.cars.filter(c => c.alive).length;
       if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
     } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }

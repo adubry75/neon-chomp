@@ -56,6 +56,10 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'echo_pellet', name: 'Echo Pellet', desc: 'The first power pellet you eat in a maze comes back once after 20s.', rarity: 'rare', max: 1, glyph: '◎', tier: 2, apply: r => { r.mods.powerEcho = true; } },
   { id: 'overcharge', name: 'Overcharge', desc: 'Power pellets stun every ghost for 1s.', rarity: 'epic', max: 1, glyph: '⚡', tier: 2, apply: r => { r.mods.powerStun = 1; } },
   { id: 'soul_siphon', name: 'Soul Siphon', desc: '+25% souls from this run.', rarity: 'common', max: 2, glyph: '♨', tier: 2, apply: r => { r.mods.soulMult += 0.25; } },
+  // ── Game++ (R4 Deja Vu) ──
+  { id: 'rewind', name: 'Rewind', desc: 'Once per maze, a fatal hit sends you back 3s along your path instead.', rarity: 'epic', max: 1, glyph: '↺', tier: 4, apply: r => { r.mods.rewinds += 1; } },
+  { id: 'forget_me', name: 'Forget Me', desc: 'Ghosts need twice as long to learn your favourite junctions.', rarity: 'common', max: 1, glyph: '?', tier: 4, apply: r => { r.mods.memorySlow *= 2; } },
+  { id: 'haunted', name: 'Haunted', desc: 'Phantoms everywhere. Coins x2.', rarity: 'curse', max: 1, glyph: '☁', tier: 4, apply: r => { r.mods.allPhantom = true; r.mods.eliteChance += 0.35; r.mods.coinMult *= 2; } },
   // ── curses (risk / reward) ──
   { id: 'glass_cannon', name: 'Glass Cannon', desc: 'Lose ALL extra lives. Score x3, coins x2.', rarity: 'curse', max: 1, glyph: '◇', apply: r => { r.lives = 0; r.mods.scoreMult *= 3; r.mods.coinMult *= 2; } },
   { id: 'hunted', name: 'Hunted', desc: 'A 5th ghost stalks you. +1 stand choice, score x1.25.', rarity: 'curse', max: 1, glyph: '☠', apply: r => { r.mods.hunted = true; r.mods.fruitStandChoices += 1; r.mods.scoreMult *= 1.25; } },

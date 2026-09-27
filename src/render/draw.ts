@@ -273,6 +273,13 @@ export function drawFruit(ctx: Ctx, id: FruitId, x: number, y: number, s: number
       ctx.quadraticCurveTo(-s * 0.05, s * 0.05, -s * 0.45, -s * 0.05); ctx.closePath(); ctx.fill();
       leaf(-s * 0.5, -s * 0.2, s * 0.16, 1.2);
       break;
+    case 'kiwi':
+      circ(0, s * 0.05, s * 0.52, '#6b4a2b');
+      circ(0, s * 0.05, s * 0.42);
+      ctx.shadowBlur = 0; circ(0, s * 0.05, s * 0.14, '#f4ffd0');
+      ctx.fillStyle = '#1a1a10';
+      for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; ctx.fillRect(Math.cos(a) * s * 0.26 - 1, s * 0.05 + Math.sin(a) * s * 0.26 - 1, 2, 3); }
+      break;
     case 'lime':
       ctx.beginPath(); ctx.ellipse(0, s * 0.05, s * 0.52, s * 0.42, -0.3, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = s * 0.06;

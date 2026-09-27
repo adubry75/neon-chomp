@@ -163,3 +163,30 @@ export function gagR3(c: Ctx, t: number) {
     c.restore();
   }
 }
+
+/** R4 (Act I→II, replaces R1's): the shadow is nearly solid now. It walks in perfect step with Pac, until its eye gives it away. */
+export function gagR4(c: Ctx, t: number) {
+  const y = VH / 2 + 40;
+  street(c, y + 26);
+  const walk = Math.min(t, 3) * 90;
+  const px = 150 + walk, sx = px + 110;
+  const mouth = t < 3 ? 0.04 + 0.26 * Math.abs(Math.sin(t * 14)) : 0.2;
+  // the shadow's colours drift toward Pac's; the red eye only shows once Pac looks
+  const reveal = t > 4.6;
+  const faceOff = t > 3.6;
+  drawPac(c, px, y, 18, RIGHT, t > 5.2 && t < 6.2 ? 0.34 : mouth, '#ffe600');
+  if (t < 6.2) {
+    const flick = reveal && Math.floor(t * 12) % 3 === 0;
+    drawShadowPac(c, sx, y, 18, faceOff ? LEFT : RIGHT, faceOff ? 0.2 : mouth, flick ? '#b45cff' : '#ffe600', flick ? '#1a0830' : '#d9c21a', reveal ? '#ff2d55' : '#d9c21a');
+  } else {
+    // glitches back to purple and bolts
+    const k = t - 6.2;
+    drawShadowPac(c, sx + k * 520, y, 18, RIGHT, 0.3, '#b45cff');
+    c.save(); c.fillStyle = '#b45cff';
+    for (let i = 0; i < 8; i++) { c.globalAlpha = Math.max(0, 1 - k * 2); c.fillRect(sx + i * 9 - 30, y - 16 + ((i * 13) % 32), 6, 4); }
+    c.restore();
+  }
+  if (t > 3.6 && t < 4.6) text(c, '?', px, y - 40, 14, '#ffe600', 'center', 8);
+  if (t > 5.2 && t < 6.4) text(c, '!!', px, y - 40, 18, '#ff2d55', 'center', 10);
+  if (t > 6.6) text(c, 'IT ALMOST LOOKS LIKE YOU NOW...', VW / 2, 240, 11, Math.floor(t * 3) % 2 ? '#ff2d55' : '#b45cff', 'center', 12);
+}

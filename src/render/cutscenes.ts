@@ -2,13 +2,13 @@ import { ACTS, ACT_COLORS } from '../game/run';
 import { LEFT, RIGHT } from '../sim/types';
 import { drawGhost, drawPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
-import { gagR1, gagR2, gagR3, sting } from './cutscenesGP';
+import { gagR1, gagR2, gagR3, gagR4, sting } from './cutscenesGP';
 
 /** The opening gag, act title cards, the two between-act chase gags, and the ending. */
-export type CutsceneId = 'intro' | 'title0' | 'title1' | 'title2' | 'title3' | 'gag1' | 'gag2' | 'ending' | 'sting' | 'gagR1' | 'gagR2' | 'gagR3';
+export type CutsceneId = 'intro' | 'title0' | 'title1' | 'title2' | 'title3' | 'gag1' | 'gag2' | 'ending' | 'sting' | 'gagR1' | 'gagR2' | 'gagR3' | 'gagR4';
 
 export const CUTSCENE_LEN: Record<CutsceneId, number> = {
-  intro: 6.8, title0: 2.8, title1: 2.8, title2: 2.8, title3: 2.8, gag1: 8.2, gag2: 9, ending: 9, sting: 5.2, gagR1: 7.4, gagR2: 9, gagR3: 6.8,
+  intro: 6.8, title0: 2.8, title1: 2.8, title2: 2.8, title3: 2.8, gag1: 8.2, gag2: 9, ending: 9, sting: 5.2, gagR1: 7.4, gagR2: 9, gagR3: 6.8, gagR4: 8.4,
 };
 
 const GHOST_COLORS = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
@@ -26,6 +26,7 @@ export function drawCutscene(c: Ctx, id: CutsceneId, t: number) {
     case 'gagR1': gagR1(c, t); break;
     case 'gagR2': gagR2(c, t); break;
     case 'gagR3': gagR3(c, t); break;
+    case 'gagR4': gagR4(c, t); break;
   }
   if (t > 0.3 && !id.startsWith('title')) text(c, 'ANY KEY TO SKIP', VW / 2, VH - 30, 7, '#5a5290', 'center', 0);
 }

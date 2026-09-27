@@ -25,6 +25,7 @@ export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: strin
   train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', rules: ['POWER UP AND EAT ALL 12 TRAIN CARS,', 'THEN CHOMP THE KING.'], color: '#ffd23d' },
   null: { name: 'THE NULL', sub: 'Eat 4 key shards to expose it.', rules: ['EAT ALL 4 KEY SHARDS TO EXPOSE THE NULL,', 'THEN CHOMP IT. IT REWRITES THE MAZE. 3 HITS.'], color: '#a8b0ff' },
   evil: { name: 'EVIL PAC', sub: 'He follows your path. Never double back.', rules: ["HE FOLLOWS YOUR PATH. DON'T DOUBLE BACK.", 'POWER UP, THEN CHOMP HIM. 3 HITS.'], color: '#b45cff' },
+  train2: { name: 'GHOST TRAIN KING EX', sub: 'The King phases through walls. His train follows.', rules: ['POWER UP AND EAT ALL 12 CARS. THE KING', 'PHASES THROUGH WALLS NOW. THEN CHOMP HIM.'], color: '#ffd23d' },
   eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', rules: ['OUTRUN THE RISING VOID.', 'EAT 3 CORES TO PUSH IT BACK.'], color: '#b45cff' },
 };
 
@@ -114,7 +115,7 @@ export class Run {
     const acts = this.twists.actIV ? 4 : 3;
     for (let a = 0; a < acts; a++) {
       for (let s = 0; s < STAGES_PER_ACT; s++) {
-        const boss: BossId | null = s === 4 ? ([this.twists.megaRemix ? 'mega2' : 'mega', 'train', 'eater', 'null'] as const)[a] : null;
+        const boss: BossId | null = s === 4 ? ([this.twists.megaRemix ? 'mega2' : 'mega', this.twists.trainRemix ? 'train2' : 'train', 'eater', 'null'] as const)[a] : null;
         let modifiers: ModifierId[] = [];
         if (!boss) {
           if (a === 0 && s >= 2) modifiers = [this.rng.pick(gentle)];

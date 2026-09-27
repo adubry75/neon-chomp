@@ -460,3 +460,71 @@ describe('R3', () => {
     expect(b.keysLeft).toBe(4);
   });
 });
+
+describe('R4', () => {
+  it('Train King EX phases through walls', () => {
+    const w = new World({ ...cfg(21), maze: generateMaze(31), boss: 'train2' });
+    w.phase = 'play';
+    const king = w.ghosts.find(g => g.king)!;
+    expect(king.elite).toBe('phantom');
+    let inWall = false;
+    for (let i = 0; i < 3000 && !inWall; i++) {
+      w.pacs[0].invulnT = 1; w.phase = 'play';
+      w.setInput(0, [UP, LEFT, DOWN, RIGHT][(i / 45 | 0) % 4] as 0, false);
+      w.update();
+      if (king.state === 'active' && w.maze.terrainAt(Math.floor(king.x), Math.floor(king.y)) === 1) inWall = true;
+    }
+    expect(inWall).toBe(true);
+  });
+  it('ghost memory learns a junction after 6 passes and sends Pinky there', () => {
+    const w = new World({ ...cfg(3), twists: twistsFor(4) });
+    w.phase = 'play';
+    const m = w.maze;
+    const j = m.openTiles().find(t => ([UP, LEFT, DOWN, RIGHT] as const).filter(d => m.canGo(t.x, t.y, d, 'pac')).length >= 3 && t.y > 20)!;
+    const p = w.pacs[0];
+    for (let k = 0; k < 6; k++) {
+      p.x = j.x + 0.5; p.y = j.y + 0.5; p.lastTile = -1; p.invulnT = 5;
+      w.update();
+      p.x = j.x + 1.5; p.lastTile = -1; // step off so the next visit counts again
+    }
+    expect(w.learned).toContain(j.y * m.w + j.x);
+    const pinky = w.ghosts.find(g => g.kind === 'pinky')!;
+    w.modeIdx = 1; // chase
+    p.x = j.x + 0.5; p.y = j.y + 0.5;
+    expect(w.ghostTarget(pinky)).toEqual({ x: j.x, y: j.y });
+  });
+  it('ghost memory is off below R4', () => {
+    const w = new World({ ...cfg(3), twists: twistsFor(3) });
+    w.phase = 'play';
+    for (let i = 0; i < 4000; i++) { w.pacs[0].invulnT = 1; w.setInput(0, [LEFT, UP, RIGHT, DOWN][(i / 30 | 0) % 4] as 0, false); w.update(); }
+    expect(w.learned.length).toBe(0);
+  });
+  it('a kiwi decoy draws every ghost and pops when touched', () => {
+    const w = new World(cfg(3));
+    w.phase = 'play';
+    w.applyFruit(w.pacs[0], 'kiwi');
+    const d = w.pacs.find(p => p.kind === 'decoy')!;
+    expect(d).toBeDefined();
+    for (const g of w.ghosts) expect(w.ghostTarget(g)).toEqual({ x: Math.floor(d.x), y: Math.floor(d.y) });
+    const g = w.ghosts[0]; g.state = 'active'; g.x = d.x; g.y = d.y; g.fright = false;
+    const p = w.pacs[0]; p.x = 1.5; p.y = 1.5;
+    w.update();
+    expect(w.pacs.some(p => p.kind === 'decoy')).toBe(false);
+    expect(w.phase).toBe('play');
+  });
+  it('Rewind turns a fatal hit into a 3s jump back', () => {
+    const mods = defaultMods(); mods.rewinds = 1;
+    const w = new World({ ...cfg(4), mods });
+    w.phase = 'play';
+    const p = w.pacs[0];
+    for (let i = 0; i < 400; i++) { p.invulnT = 1; w.setInput(0, [LEFT, UP, RIGHT, DOWN][(i / 50 | 0) % 4] as 0, false); w.update(); }
+    p.invulnT = 0;
+    const back = w.trail[Math.max(0, w.trail.length - 181)];
+    w.hurtPac(p, -1);
+    expect(w.phase).toBe('play');
+    expect(p.x).toBe(Math.floor(back.x) + 0.5);
+    expect(w.rewindsLeft).toBe(0);
+    w.hurtPac(p, -1);
+    expect(w.phase).toBe('dying');
+  });
+});

@@ -67,7 +67,7 @@ describe('cheat console', () => {
   it('rejects unknown commands and bad ids without marking the run', () => {
     const { run, ctx } = setup();
     expect(runCheat('bogus', ctx)).toMatch(/^\?/);
-    expect(runCheat('fruit kiwi', ctx)).toMatch(/^\?/);
+    expect(runCheat('fruit durian', ctx)).toMatch(/^\?/);
     expect(runCheat('mod lava', ctx)).toMatch(/^\?/);
     expect(runCheat('lives abc', ctx)).toMatch(/^\?/);
     expect(run.cheated).toBe(false);
