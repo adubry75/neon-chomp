@@ -837,6 +837,7 @@ class Game {
         'Coins come from ghosts, fruit and clears. Spend them at the Fruit Stand on lives and rerolls.',
         'Ghost Souls come from every run, win or lose. Spend them in the Soul Shop to unlock fruits, perks and skins.',
         'Later mazes add modifiers and elite ghosts: SPEEDY (streaks), SHIELDED (needs 2 hits), SPLITTER (cracks in two).',
+        ...(this.meta.tierUnlocked > 0 ? ['REINCARNATIONS: pick a tier with LEFT/RIGHT on the title screen. Each one adds new twists. PHANTOM elites flicker, then drift through walls.'] : []),
       ];
       let y = 270;
       for (const p of para) y += wrapText(c, p, VW / 2, y, VW - 100, 8, '#c8c0f0', 16) + 16;
