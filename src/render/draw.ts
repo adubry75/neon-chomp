@@ -72,9 +72,28 @@ export function drawPac(ctx: Ctx, x: number, y: number, r: number, dir: Dir, mou
   ctx.restore();
 }
 
+/** Evil Pac: a dark Pac with a glowing rim and one red eye. */
+export function drawShadowPac(ctx: Ctx, x: number, y: number, r: number, dir: Dir, mouth: number, rim = '#b45cff', fill = '#1a0830', eye = '#ff2d55', alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  if (dir === LEFT) ctx.scale(-1, 1);
+  else if (dir === UP) ctx.rotate(-Math.PI / 2);
+  else if (dir === DOWN) ctx.rotate(Math.PI / 2);
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.15, 0);
+  ctx.arc(0, 0, r, mouth * Math.PI, -mouth * Math.PI + Math.PI * 2);
+  ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.strokeStyle = rim; ctx.lineWidth = Math.max(1.5, r * 0.1); ctx.shadowColor = rim; ctx.shadowBlur = 12; ctx.stroke();
+  ctx.fillStyle = eye; ctx.shadowColor = eye; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.arc(r * 0.05, -r * 0.5, Math.max(2, r * 0.17), 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 export interface GhostLook {
   fright?: boolean; flash?: boolean; frozen?: boolean; eyesOnly?: boolean; stunned?: boolean;
-  elite?: 'speedy' | 'shielded' | 'splitter' | null; shield?: number; king?: boolean; t: number; alpha?: number; sleeping?: boolean;
+  elite?: 'speedy' | 'shielded' | 'splitter' | 'phantom' | null; shield?: number; king?: boolean; t: number; alpha?: number; sleeping?: boolean;
 }
 
 export function drawGhost(ctx: Ctx, x: number, y: number, r: number, color: string, dir: Dir, look: GhostLook) {
@@ -149,7 +168,7 @@ export function drawGhost(ctx: Ctx, x: number, y: number, r: number, color: stri
     ctx.closePath(); ctx.fill();
     ctx.shadowBlur = 0;
   }
-  if (look.elite === 'shielded' && (look.shield ?? 0) > 0) {
+  if ((look.shield ?? 0) > 0) {
     ctx.strokeStyle = '#7fd8ff'; ctx.lineWidth = 2; ctx.shadowColor = '#7fd8ff'; ctx.shadowBlur = 10;
     ctx.beginPath();
     for (let i = 0; i <= 6; i++) { const a = (i / 6) * Math.PI * 2 + t; const px = Math.cos(a) * r * 1.35, py = Math.sin(a) * r * 1.35; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
@@ -253,6 +272,19 @@ export function drawFruit(ctx: Ctx, id: FruitId, x: number, y: number, s: number
       ctx.quadraticCurveTo(s * 0.4, -s * 0.4, s * 0.45, s * 0.55);
       ctx.quadraticCurveTo(-s * 0.05, s * 0.05, -s * 0.45, -s * 0.05); ctx.closePath(); ctx.fill();
       leaf(-s * 0.5, -s * 0.2, s * 0.16, 1.2);
+      break;
+    case 'kiwi':
+      circ(0, s * 0.05, s * 0.52, '#6b4a2b');
+      circ(0, s * 0.05, s * 0.42);
+      ctx.shadowBlur = 0; circ(0, s * 0.05, s * 0.14, '#f4ffd0');
+      ctx.fillStyle = '#1a1a10';
+      for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; ctx.fillRect(Math.cos(a) * s * 0.26 - 1, s * 0.05 + Math.sin(a) * s * 0.26 - 1, 2, 3); }
+      break;
+    case 'lime':
+      ctx.beginPath(); ctx.ellipse(0, s * 0.05, s * 0.52, s * 0.42, -0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = s * 0.06;
+      for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(0, s * 0.05); ctx.lineTo(Math.cos(a) * s * 0.36, s * 0.05 + Math.sin(a) * s * 0.3); ctx.stroke(); }
+      leaf(s * 0.3, -s * 0.42, s * 0.18);
       break;
     case 'rainbow': {
       const cols = ['#ff2d55', '#ff9a1f', '#ffe45c', '#5cff8a', '#5ce1ff', '#b45cff'];

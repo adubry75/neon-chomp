@@ -2,27 +2,39 @@ import { ACTS, ACT_COLORS } from '../game/run';
 import { LEFT, RIGHT } from '../sim/types';
 import { drawGhost, drawPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
+import { credits, faceoff, gagR1, gagR2, gagR3, gagR4, sting, trueEnding } from './cutscenesGP';
 
 /** The opening gag, act title cards, the two between-act chase gags, and the ending. */
-export type CutsceneId = 'intro' | 'title0' | 'title1' | 'title2' | 'gag1' | 'gag2' | 'ending';
+export type CutsceneId = 'intro' | 'title0' | 'title1' | 'title2' | 'title3' | 'title4' | 'faceoff' | 'trueEnding' | 'credits' | 'gag1' | 'gag2' | 'ending' | 'sting' | 'gagR1' | 'gagR2' | 'gagR3' | 'gagR4';
 
 export const CUTSCENE_LEN: Record<CutsceneId, number> = {
-  intro: 6.8, title0: 2.8, title1: 2.8, title2: 2.8, gag1: 8.2, gag2: 9, ending: 9,
+  intro: 6.8, title0: 2.8, title1: 2.8, title2: 2.8, title3: 2.8, title4: 2.8, faceoff: 7.5, trueEnding: 11, credits: 16, gag1: 8.2, gag2: 9, ending: 9, sting: 5.2, gagR1: 7.4, gagR2: 9, gagR3: 6.8, gagR4: 8.4,
 };
 
 const GHOST_COLORS = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
 const chomp = (t: number) => 0.04 + 0.26 * Math.abs(Math.sin(t * 14));
 
+/** Seconds before a cutscene can be skipped (the unlock sting is too important to mash past). */
+export const skipAfter = (id: CutsceneId) => (id === 'sting' ? 2 : 0.3);
+
 /** Draw cutscene `id` at `t` seconds in. Pure function of time. */
 export function drawCutscene(c: Ctx, id: CutsceneId, t: number) {
   switch (id) {
-    case 'title0': case 'title1': case 'title2': titleCard(c, +id.slice(5), t); break;
+    case 'title0': case 'title1': case 'title2': case 'title3': case 'title4': titleCard(c, +id.slice(5), t); break;
     case 'intro': gagWakeUp(c, t); break;
     case 'gag1': gagChase(c, t); break;
     case 'gag2': gagTrain(c, t); break;
     case 'ending': ending(c, t); break;
+    case 'sting': sting(c, t); break;
+    case 'gagR1': gagR1(c, t); break;
+    case 'gagR2': gagR2(c, t); break;
+    case 'gagR3': gagR3(c, t); break;
+    case 'gagR4': gagR4(c, t); break;
+    case 'faceoff': faceoff(c, t); break;
+    case 'trueEnding': trueEnding(c, t); break;
+    case 'credits': credits(c, t); break;
   }
-  if (t > 0.3 && !id.startsWith('title')) text(c, 'ANY KEY TO SKIP', VW / 2, VH - 30, 7, '#5a5290', 'center', 0);
+  if (t > skipAfter(id) && !id.startsWith('title')) text(c, 'ANY KEY TO SKIP', VW / 2, VH - 30, 7, '#5a5290', 'center', 0);
 }
 
 function titleCard(c: Ctx, act: number, t: number) {

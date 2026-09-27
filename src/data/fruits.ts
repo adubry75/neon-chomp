@@ -1,6 +1,6 @@
 export type FruitId =
   | 'cherry' | 'strawberry' | 'orange' | 'apple' | 'melon' | 'bell'
-  | 'key' | 'pineapple' | 'banana' | 'grapes' | 'chili' | 'rainbow';
+  | 'key' | 'pineapple' | 'banana' | 'grapes' | 'chili' | 'rainbow' | 'lime' | 'kiwi';
 
 export interface FruitDef {
   id: FruitId;
@@ -15,6 +15,8 @@ export interface FruitDef {
   weight: number;
   /** Must be unlocked via meta-progression before it can spawn. */
   locked?: boolean;
+  /** Only spawns in runs at this reincarnation tier or higher. */
+  tier?: number;
 }
 
 export const FRUITS: Record<FruitId, FruitDef> = {
@@ -29,6 +31,8 @@ export const FRUITS: Record<FruitId, FruitDef> = {
   banana:     { id: 'banana', name: 'Banana', power: 'PEEL TRAP', desc: 'Drop peels behind you. Ghosts spin out.', points: 800, duration: 10, color: '#fff05c', leaf: '#8a6d1c', weight: 7, locked: true },
   grapes:     { id: 'grapes', name: 'Grapes', power: 'SWARM', desc: '3 mini-Pacs hunt pellets for you.', points: 1200, duration: 7, color: '#b04dff', leaf: '#3dff8a', weight: 6, locked: true },
   chili:      { id: 'chili', name: 'Chili', power: 'FIRE TRAIL', desc: 'Your path burns. Ghosts that touch it get torched.', points: 1600, duration: 6, color: '#ff3b1f', leaf: '#3dff8a', weight: 6, locked: true },
+  lime:       { id: 'lime', name: 'Lime', power: 'PHASE', desc: 'Push into a thin wall to hop through it (2 charges).', points: 1400, duration: 12, color: '#b6ff3d', leaf: '#3dff8a', weight: 7, tier: 1 },
+  kiwi:       { id: 'kiwi', name: 'Kiwi', power: 'DECOY', desc: 'Drop a decoy Pac. Every ghost goes after it.', points: 1800, duration: 5, color: '#8fd13a', leaf: '#6b4a2b', weight: 6, tier: 4 },
   rainbow:    { id: 'rainbow', name: 'Rainbow Fruit', power: 'PAC-FRENZY', desc: 'All ghosts frightened 10s. Pellets worth 5x.', points: 5000, duration: 10, color: '#ffffff', leaf: '#ff5cf0', weight: 1.2 },
 };
 

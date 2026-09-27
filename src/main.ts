@@ -3,11 +3,13 @@ import { T, drawFruit, drawGhost, drawPac, panel, text, wrapText } from './rende
 import { Input, type DeviceId } from './input/input';
 import { GameAudio } from './audio/audio';
 import { World, type PlayerInfo } from './sim/world';
-import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
-import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
+import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
+import { CUTSCENE_LEN, drawCutscene, skipAfter, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
-import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { META_ITEMS, defaultMeta, loadMeta, newTierWaiting, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { TIERS, actColor, gagFor, tierLabel, tierSouls } from './data/tiers';
+import { HEAT_BY_ID, HEAT_RULES, HEAT_SKINS, MAX_HEAT, heatPoints, heatSoulMult } from './data/heat';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
 import { MODIFIERS } from './sim/modifiers';
@@ -15,7 +17,7 @@ import { generateMaze } from './sim/mazegen';
 import { defaultMods } from './sim/mods';
 import { DOWN, LEFT, NONE, RIGHT, TICK, UP, type Dir } from './sim/types';
 
-type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene';
+type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene' | 'heat';
 type LobbyMode = 'coop' | 'royale' | 'squad';
 
 const PLAYER_COLORS = ['#ffe600', '#5cff8a', '#ff5cf0', '#f4f4ff'];
@@ -43,7 +45,9 @@ class Game {
   squadRound = 0;
   squadTotals: Record<number, number> = {};
   lastRound: { title: string; lines: [string, string][] } | null = null;
-  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean } | null = null;
+  resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean; unlocked: number | null } | null = null;
+  /** Reincarnation tier the next Solo/Co-op run starts on (picked on the title screen). */
+  tier = 0;
   toast = '';
   toastT = 0;
   sceneT = 0;
@@ -60,11 +64,13 @@ class Game {
 
   constructor() {
     this.applySettings();
+    this.tier = this.meta.tierUnlocked;
     this.input.onFirstGesture = () => { this.audio.init(); this.audio.play(this.trackFor()); };
     (window as unknown as { __game: Game }).__game = this;
     window.addEventListener('keydown', e => this.consoleKey(e));
     const q = new URLSearchParams(location.search);
-    if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0);
+    if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0, Math.min(5, Math.max(0, Number(q.get('tier')) || 0)));
+    if (q.get('auto') === 'evil') this.startEvilPrototype();
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
     if (q.get('auto') === 'squad') { this.players = [0, 1, 2].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startSquad(); }
     requestAnimationFrame(t => this.frame(t));
@@ -80,7 +86,7 @@ class Game {
 
   trackFor() {
     switch (this.scene) {
-      case 'title': case 'meta': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
+      case 'title': case 'meta': case 'heat': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
       case 'stand': case 'cutscene': return 'stand';
       case 'pause': return 'none';
       case 'play': return this.world?.cfg.boss ? 'boss' : 'play';
@@ -108,6 +114,7 @@ class Game {
       case 'meta': this.metaShop(); break;
       case 'settings': this.settingsScene(); break;
       case 'help': this.help(); break;
+      case 'heat': this.heatScene(); break;
       case 'versus': this.versusResults(); break;
       case 'cutscene': this.cutscene(dt); break;
     }
@@ -153,28 +160,81 @@ class Game {
     }
     if (chase) { c.save(); c.fillStyle = '#fff4e0'; c.shadowColor = '#fff'; c.shadowBlur = 14; c.beginPath(); c.arc(VW - 40, y, 7, 0, Math.PI * 2); c.fill(); c.restore(); }
 
-    const items = ['SOLO RUN', 'CO-OP RUN  (1-4P)', 'CHOMP ROYALE  (2-4P)', 'GHOST SQUAD  (2-4P)', 'SOUL SHOP', 'HOW TO PLAY', 'SETTINGS'];
+    const entries: [string, () => void][] = [
+      ['SOLO RUN', () => { this.markTierStarted(); this.startSolo(); }],
+      ['CO-OP RUN  (1-4P)', () => this.openLobby('coop')],
+      ...(this.meta.tierUnlocked >= 2 ? [[`HEAT  ${this.activeHeat().length ? heatPoints(this.activeHeat()) : 'OFF'}`, () => this.go('heat')] as [string, () => void]] : []),
+      ['CHOMP ROYALE  (2-4P)', () => this.openLobby('royale')],
+      ['GHOST SQUAD  (2-4P)', () => this.openLobby('squad')],
+      ['SOUL SHOP', () => this.go('meta')],
+      ['HOW TO PLAY', () => this.go('help')],
+      ['SETTINGS', () => this.go('settings')],
+    ];
+    const items = entries.map(e => e[0]);
     this.menuNav(items.length);
+    if (this.meta.tierUnlocked > 0 && this.cursor <= 1) {
+      const d = this.input.menuDirEdge, n = this.meta.tierUnlocked + 1;
+      if (d === LEFT) { this.tier = (this.tier + n - 1) % n; this.audio.ui('move'); }
+      if (d === RIGHT) { this.tier = (this.tier + 1) % n; this.audio.ui('move'); }
+      text(c, `◀  ${tierLabel(this.tier)}  ▶`, VW / 2, 345, 11, TIERS[this.tier].color, 'center', 10);
+    }
+    if (newTierWaiting(this.meta)) {
+      const pulse = Math.floor(t * 3) % 2 === 0;
+      text(c, `NEW! ${tierLabel(this.meta.tierUnlocked)} UNLOCKED`, VW / 2, 272, 12, pulse ? '#ffe600' : '#ff2df0', 'center', pulse ? 14 : 6);
+      if (this.cursor > 1) text(c, 'PICK IT ON SOLO RUN OR CO-OP RUN WITH LEFT / RIGHT', VW / 2, 345, 7, '#8f86c9', 'center', 0);
+    }
     items.forEach((s, i) => {
       const sel = i === this.cursor;
       const yy = 380 + i * 46;
       if (sel) { panel(c, VW / 2 - 200, yy - 18, 400, 36, '#ffe600', 'rgba(40,20,60,0.7)'); drawPac(c, VW / 2 - 175, yy, 9, RIGHT, 0.05 + 0.25 * Math.abs(Math.sin(t * 10)), '#ffe600', 8); }
       text(c, s, VW / 2, yy, 13, sel ? '#fff' : '#8f86c9', 'center', sel ? 10 : 0);
     });
-    text(c, `BEST ${this.meta.best}   ·   SOULS ${this.meta.souls}   ·   RUNS ${this.meta.runs}   ·   WINS ${this.meta.wins}`, VW / 2, VH - 64, 8, '#b45cff', 'center', 6);
+    const tierTxt = this.meta.tierUnlocked ? `   ·   R${this.meta.tierUnlocked}` : '';
+    text(c, `BEST ${this.meta.best}   ·   SOULS ${this.meta.souls}   ·   RUNS ${this.meta.runs}   ·   WINS ${this.meta.wins}${tierTxt}`, VW / 2, VH - 64, 8, '#b45cff', 'center', 6);
     text(c, 'ENTER / SPACE / (A) TO SELECT   ·   M TO MUTE', VW / 2, VH - 40, 7, '#5a5290', 'center', 0);
     if (this.input.confirm()) {
       this.audio.ui('select');
-      switch (this.cursor) {
-        case 0: this.startSolo(); break;
-        case 1: this.openLobby('coop'); break;
-        case 2: this.openLobby('royale'); break;
-        case 3: this.openLobby('squad'); break;
-        case 4: this.go('meta'); break;
-        case 5: this.go('help'); break;
-        case 6: this.go('settings'); break;
-      }
+      entries[this.cursor]?.[1]();
     }
+  }
+
+  /** Starting a run from the menu on a tier counts as having tried it (the NEW banner goes away). */
+  markTierStarted() {
+    if (this.tier > this.meta.tierStarted) { this.meta.tierStarted = this.tier; saveMeta(this.meta); }
+  }
+
+  /** Heat rules picked and still unlocked (a progress reset can lock them again). */
+  activeHeat() { return this.meta.heatPicked.filter(id => (HEAT_BY_ID[id]?.tier ?? 99) <= this.meta.tierUnlocked); }
+
+  // ───────────────────────── heat ─────────────────────────
+
+  heatScene() {
+    const c = this.r.ctx, m = this.meta;
+    text(c, 'HEAT', VW / 2, 80, 26, '#ff6a3d', 'center', 16);
+    text(c, 'OPTIONAL RULES FOR BRAGGING RIGHTS  ·  +10% SOULS PER POINT', VW / 2, 120, 7, '#8f86c9', 'center', 0);
+    this.menuNav(HEAT_RULES.length + 1);
+    HEAT_RULES.forEach((r, i) => {
+      const y = 170 + i * 64, sel = i === this.cursor;
+      const locked = r.tier > m.tierUnlocked, on = m.heatPicked.includes(r.id) && !locked;
+      if (sel) panel(c, 30, y - 22, VW - 60, 52, '#ff6a3d', 'rgba(50,20,10,0.8)');
+      text(c, locked ? `R${r.tier}` : on ? '■' : '□', 62, y + 2, locked ? 9 : 16, locked ? '#5a5290' : on ? '#ff6a3d' : '#8f86c9', 'center', on ? 8 : 0);
+      text(c, locked ? '???' : r.name.toUpperCase(), 92, y - 6, 10, locked ? '#5a5290' : on ? '#fff' : '#b8b0e8', 'left', 0);
+      text(c, locked ? `UNLOCKS AT REINCARNATION ${r.tier}` : r.desc, 92, y + 12, 6, '#8f86c9', 'left', 0);
+      text(c, `+${r.points}`, VW - 54, y + 2, 12, locked ? '#5a5290' : '#ff6a3d', 'right', 0);
+    });
+    const pts = heatPoints(this.activeHeat());
+    const y0 = 170 + HEAT_RULES.length * 64;
+    text(c, `HEAT ${pts}/${MAX_HEAT}   ·   SOULS x${heatSoulMult(pts).toFixed(1)}   ·   BEST CLEAR ${m.heatBest}`, VW / 2, y0 + 4, 9, '#ffd23d', 'center', 6);
+    text(c, HEAT_SKINS.map(s => `${m.heatBest >= s.heat ? '✓' : '·'} HEAT ${s.heat}: ${s.name.replace('Skin: ', '').toUpperCase()}`).join('   '), VW / 2, y0 + 34, 6, '#8f86c9', 'center', 0);
+    const backSel = this.cursor === HEAT_RULES.length;
+    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, y0 + 80, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
+    if (this.input.back() || (this.input.confirm() && backSel)) { this.audio.ui('back'); this.go('title'); return; }
+    if (!this.input.confirm()) return;
+    const r = HEAT_RULES[this.cursor];
+    if (r.tier > m.tierUnlocked) { this.audio.ui('deny'); return; }
+    m.heatPicked = m.heatPicked.includes(r.id) ? m.heatPicked.filter(id => id !== r.id) : [...m.heatPicked, r.id];
+    saveMeta(m);
+    this.audio.ui('select');
   }
 
   // ───────────────────────── lobby ─────────────────────────
@@ -192,6 +252,7 @@ class Game {
     const min = this.lobbyMode === 'coop' ? 1 : 2;
     text(c, names[this.lobbyMode], VW / 2, 90, 22, '#ffe600', 'center', 16);
     wrapText(c, blurbs[this.lobbyMode], VW / 2, 140, VW - 120, 8, '#8fa0ff', 16);
+    if (this.lobbyMode === 'coop' && this.meta.tierUnlocked > 0) text(c, tierLabel(this.tier), VW / 2, 198, 9, TIERS[this.tier].color, 'center', 8);
     for (let i = 0; i < 4; i++) {
       const p = this.players[i];
       const x = 40 + (i % 2) * 306, y = 220 + Math.floor(i / 2) * 200;
@@ -225,22 +286,22 @@ class Game {
   }
 
   launchLobby() {
-    if (this.lobbyMode === 'coop') this.startRun(this.players);
+    if (this.lobbyMode === 'coop') { this.markTierStarted(); this.startRun(this.players, undefined, 0, this.tier); }
     else if (this.lobbyMode === 'royale') this.startRoyale();
     else { this.squadRound = 0; this.squadTotals = {}; this.startSquad(); }
   }
 
   // ───────────────────────── run flow ─────────────────────────
 
-  startSolo(seed?: number, stage = 0) {
+  startSolo(seed?: number, stage = 0, tier = this.tier) {
     this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
-    this.startRun(this.players, seed, stage);
+    this.startRun(this.players, seed, stage, tier);
   }
 
-  startRun(players: Player[], seed?: number, stage = 0) {
+  startRun(players: Player[], seed?: number, stage = 0, tier = 0) {
     this.mode = 'run';
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
-    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta);
+    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta, tier, this.activeHeat());
     this.run.stage = stage;
     this.world = null;
     this.meta.runs++; saveMeta(this.meta);
@@ -248,10 +309,24 @@ class Game {
     else this.startStage();
   }
 
+  /** Debug: the Evil Pac fight on its own. Marked cheated, so it never touches the save. */
+  startEvilPrototype() {
+    this.mode = 'run';
+    this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
+    this.run = new Run(Math.floor(Math.random() * 2 ** 31) >>> 0, [{ slot: 0, color: this.meta.skin }], this.meta, 5);
+    this.run.cheated = true;
+    this.run.plan = [{ act: 4, index: 0, level: 17, boss: 'evil', modifiers: [], mazeSeed: 4242 }];
+    this.world = null;
+    this.startStage();
+  }
+
   /** Start the run's current stage, with the intermission + title card first when a new act begins. */
   nextStage() {
     const p = this.run!.current;
-    if (p.index === 0 && this.run!.stage > 0) this.playCutscenes([`gag${p.act}` as CutsceneId, `title${p.act}` as CutsceneId], () => this.startStage());
+    if (p.index === 0 && this.run!.stage > 0) {
+      const ids = [gagFor(p.act, this.run!.tier), `title${p.act}`].filter((id): id is CutsceneId => !!id && id in CUTSCENE_LEN);
+      this.playCutscenes(ids, () => this.startStage());
+    }
     else this.startStage();
   }
 
@@ -265,7 +340,7 @@ class Game {
     this.r.time += dt;
     const id = this.cutQueue[0];
     if (id) drawCutscene(this.r.ctx, id, this.sceneT);
-    const skip = this.sceneT > 0.3 && this.input.anyPressed();
+    const skip = !!id && this.sceneT > skipAfter(id) && this.input.anyPressed();
     if (id && this.sceneT < CUTSCENE_LEN[id] && !skip) return;
     this.cutQueue.shift();
     this.sceneT = 0;
@@ -330,8 +405,8 @@ class Game {
       const boss = p.boss ? BOSS_INFO[p.boss] : null;
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
-        stageLabel: `ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
-        wallColor: boss ? boss.color : ACT_COLORS[p.act],
+        stageLabel: `${this.run.tier ? `R${this.run.tier} · ` : ''}${ACTS[p.act].split(' · ')[0]}`, pips: actPips(this.run.plan, this.run.stage),
+        wallColor: boss ? boss.color : actColor(this.run.tier, p.act),
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
         playerNames: [], showControlsHint: this.run.stage === 0 && w.deathsThisStage === 0,
@@ -383,8 +458,13 @@ class Game {
       const run = this.run!;
       run.absorb(w);
       if (w.done === 'clear') {
-        if (!run.advance()) { this.playCutscenes(['ending'], () => this.endRun(true)); return; }
-        run.rollOffers();
+        if (!run.advance()) {
+          const ids: CutsceneId[] = run.twists.evilPac ? ['trueEnding', 'credits'] : ['ending'];
+          if (!run.cheated && !this.meta.seenCutscenes.includes('sting')) ids.push('sting');
+          this.playCutscenes(ids, () => this.endRun(true));
+          return;
+        }
+        run.openStand();
         this.standMsg = '';
         this.go('stand');
       } else this.endRun(false);
@@ -415,16 +495,23 @@ class Game {
     const run = this.run!;
     run.won = won;
     // cheated runs never touch the save
-    const souls = run.cheated ? 0 : soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won);
+    const bonus = heatSoulMult(run.heatPoints) * run.mods.soulMult * (1 + 0.15 * perkLevel(this.meta, 'gp_souls'));
+    const souls = run.cheated ? 0 : Math.floor(tierSouls(soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won), run.tier) * bonus);
     const newBest = !run.cheated && run.score > this.meta.best;
+    let unlocked: number | null = null;
     if (!run.cheated) {
       this.meta.souls += souls;
       this.meta.best = Math.max(this.meta.best, run.score);
       this.meta.bossesBeaten += run.bossesBeaten;
-      if (won) this.meta.wins++;
+      if (won) {
+        unlocked = recordWin(this.meta, run.tier);
+        this.meta.heatBest = Math.max(this.meta.heatBest, run.heatPoints);
+        if (!this.meta.seenCutscenes.includes('sting')) this.meta.seenCutscenes.push('sting');
+        if (unlocked !== null) this.tier = unlocked;
+      }
       saveMeta(this.meta);
     }
-    this.resultInfo = { won, souls, newBest, cheated: run.cheated };
+    this.resultInfo = { won, souls, newBest, cheated: run.cheated, unlocked };
     this.go('results');
   }
 
@@ -463,6 +550,7 @@ class Game {
       jumpToStage: i => { this.run!.stage = i; this.startStage(); },
       rebuildStage: () => this.startStage(),
       toggleSlowmo: () => (this.slowmo = !this.slowmo),
+      restartAtTier: t => { this.startRun(this.players, undefined, 0, t); this.run!.cheated = true; },
     });
   }
 
@@ -512,7 +600,7 @@ class Game {
     text(c, String(run.coins), VW / 2 - 26, 133, 13, '#ffd23d', 'left', 8);
     // next stage preview
     const boss = plan.boss ? BOSS_INFO[plan.boss] : null;
-    panel(c, 40, 160, VW - 80, 70, boss ? boss.color : ACT_COLORS[plan.act]);
+    panel(c, 40, 160, VW - 80, 70, boss ? boss.color : actColor(run.tier, plan.act));
     text(c, `NEXT: ${ACTS[plan.act]} · ${boss ? 'BOSS' : 'STAGE ' + (plan.index + 1) + '/' + (STAGES_PER_ACT - 1)}`, VW / 2, 182, 9, '#fff', 'center', 4);
     const modsTxt = boss ? boss.name : plan.modifiers.length ? plan.modifiers.map(m => MODIFIERS[m].name).join(' + ') : 'NO MODIFIERS';
     text(c, modsTxt, VW / 2, 208, 10, boss ? boss.color : plan.modifiers.length ? MODIFIERS[plan.modifiers[0]].color : '#8fa0ff', 'center', 8);
@@ -540,7 +628,7 @@ class Game {
       const owned = run.upgrades[u.id] ?? 0;
       if (owned) text(c, `OWNED ${owned}/${u.max}`, x + cw / 2, y + 280 + lift, 6, '#8fa0ff', 'center', 0);
     });
-    const shop = [`+1 LIFE  (${run.lifeCost}c)`, `REROLL  (${run.rerollCost}c)`, 'SKIP  (+15c)'];
+    const shop = [run.mods.noLives ? 'NO LIVES (HEAT)' : `+1 LIFE  (${run.lifeCost}c)`, run.freeRerollReady ? 'REROLL  (FREE)' : `REROLL  (${run.rerollCost}c)`, 'SKIP  (+15c)'];
     shop.forEach((s, i) => {
       const x = 40 + i * ((VW - 80) / 3), w = (VW - 80) / 3 - 10;
       const sel = rowShop && i === this.cursor;
@@ -573,7 +661,7 @@ class Game {
         this.audio.ui('buy');
         this.nextStage();
       } else if (this.cursor === 0) {
-        if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
+        if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = run.mods.noLives ? 'NO REFUNDS: HEAT RULE' : 'NOT ENOUGH COINS'; }
       } else if (this.cursor === 1) {
         if (run.reroll()) { this.audio.ui('buy'); this.standMsg = 'FRESH FRUIT!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else {
@@ -587,8 +675,11 @@ class Game {
   results() {
     const c = this.r.ctx, run = this.run!, info = this.resultInfo!;
     this.r.time += 1 / 60;
-    text(c, info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
-    if (info.won) text(c, 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
+    const finale = info.won && run.twists.evilPac;
+    text(c, finale ? 'YOU BEAT YOURSELF!' : info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
+    if (info.won) text(c, finale ? 'THE GLITCH IS GONE. FOR REAL THIS TIME.' : 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
+    if (info.unlocked !== null) text(c, 'PICK IT ON THE TITLE SCREEN: LEFT / RIGHT ON SOLO RUN', VW / 2, 190, 7, '#8f86c9', 'center', 0);
+    if (info.unlocked !== null) text(c, `${tierLabel(info.unlocked)} UNLOCKED`, VW / 2, 172, 10, Math.floor(this.r.time * 3) % 2 ? TIERS[info.unlocked].color : '#fff', 'center', 12);
     const p = run.plan[Math.min(run.stage, run.plan.length - 1)];
     const rows: [string, string][] = [
       ['SCORE', String(run.score) + (info.newBest ? '  NEW BEST!' : '')],
@@ -611,9 +702,11 @@ class Game {
     if (info.cheated) text(c, 'CHEATED · NOT SAVED', VW / 2, 620, 16, '#ff5c7a', 'center', 16);
     else text(c, `+${info.souls} GHOST SOULS`, VW / 2, 620, 16, '#b45cff', 'center', 16);
     c.restore();
-    text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
-    if (this.sceneT > 1) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);
-    if (this.sceneT > 1 && (this.input.confirm() || this.input.back())) { this.audio.ui('select'); this.go('title'); }
+    if (info.cheated && info.won) text(c, "CHEATED RUNS DON'T UNLOCK REINCARNATIONS", VW / 2, 660, 8, '#ff5c7a', 'center', 0);
+    else text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
+    const wait = info.unlocked !== null ? 2 : 1;
+    if (this.sceneT > wait) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);
+    if (this.sceneT > wait && (this.input.confirm() || this.input.back())) { this.audio.ui('select'); this.go('title'); }
   }
 
   versusResults() {
@@ -644,13 +737,18 @@ class Game {
     const c = this.r.ctx, m = this.meta;
     text(c, 'SOUL SHOP', VW / 2, 70, 24, '#b45cff', 'center', 16);
     text(c, `GHOST SOULS: ${m.souls}`, VW / 2, 112, 11, '#fff', 'center', 6);
-    const items = META_ITEMS;
+    const items = META_ITEMS.filter(it => (it.minTier ?? 0) <= m.tierUnlocked);
     this.menuNav(items.length + 1);
+    const ROWS = 13, top = Math.max(0, Math.min(this.cursor - 6, items.length - ROWS));
+    if (top > 0) text(c, '▲', VW / 2, 134, 8, '#8f86c9', 'center', 0);
+    if (top + ROWS < items.length) text(c, '▼', VW / 2, 150 + ROWS * 44 - 14, 8, '#8f86c9', 'center', 0);
     items.forEach((it, i) => {
+      if (i < top || i >= top + ROWS) return;
       const lvl = it.kind === 'fruit' ? (m.unlockedFruits.includes(it.fruit!) ? 1 : 0) : it.kind === 'skin' ? (m.perks[it.id] ?? 0) : perkLevel(m, it.id);
       const maxed = lvl >= it.max;
+      const heatLocked = !lvl && (it.minHeat ?? 0) > m.heatBest;
       const sel = i === this.cursor;
-      const y = 150 + i * 44;
+      const y = 150 + (i - top) * 44;
       if (sel) panel(c, 30, y - 18, VW - 60, 38, '#b45cff', 'rgba(40,20,70,0.8)');
       if (it.kind === 'fruit') drawFruit(c, it.fruit!, 58, y, 10, this.r.time);
       else if (it.kind === 'skin') drawPac(c, 58, y, 10, RIGHT, 0.2, it.color!, 8);
@@ -658,11 +756,11 @@ class Game {
       text(c, it.name.toUpperCase() + (it.max > 1 ? ` ${lvl}/${it.max}` : ''), 80, y - 6, 9, maxed ? '#5cff8a' : '#fff', 'left', 0);
       text(c, it.desc, 80, y + 9, 6, '#8f86c9', 'left', 0);
       const equipped = it.kind === 'skin' && m.skin === it.color;
-      const label = it.kind === 'skin' && lvl ? (equipped ? 'EQUIPPED' : 'EQUIP') : maxed ? 'OWNED' : `${it.cost(lvl)} SOULS`;
+      const label = it.kind === 'skin' && lvl ? (equipped ? 'EQUIPPED' : 'EQUIP') : maxed ? 'OWNED' : heatLocked ? `HEAT ${it.minHeat}` : it.cost(lvl) ? `${it.cost(lvl)} SOULS` : 'FREE';
       text(c, label, VW - 50, y, 9, maxed && !(it.kind === 'skin') ? '#5cff8a' : m.souls >= it.cost(lvl) || (it.kind === 'skin' && lvl) ? '#ffe600' : '#5a5290', 'right', 0);
     });
     const backSel = this.cursor === items.length;
-    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, 150 + items.length * 44 + 10, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
+    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, 150 + Math.min(items.length, ROWS) * 44 + 10, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
     if (this.input.back()) { this.audio.ui('back'); this.go('title'); return; }
     if (!this.input.confirm()) return;
     if (backSel) { this.audio.ui('back'); this.go('title'); return; }
@@ -670,6 +768,7 @@ class Game {
     const lvl = it.kind === 'fruit' ? (m.unlockedFruits.includes(it.fruit!) ? 1 : 0) : (m.perks[it.id] ?? 0);
     if (it.kind === 'skin' && lvl) { m.skin = it.color!; saveMeta(m); this.audio.ui('select'); return; }
     if (lvl >= it.max) { this.audio.ui('deny'); return; }
+    if ((it.minHeat ?? 0) > m.heatBest) { this.audio.ui('deny'); this.say(`CLEAR A RUN AT HEAT ${it.minHeat}`); return; }
     const cost = it.cost(lvl);
     if (m.souls < cost) { this.audio.ui('deny'); this.say('NOT ENOUGH SOULS'); return; }
     m.souls -= cost;
@@ -715,7 +814,7 @@ class Game {
         case 4: s.sfx = Math.max(0, Math.min(1, Math.round((s.sfx + delta * 0.1) * 10) / 10)); break;
         case 5:
           if (this.input.confirm()) {
-            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...loadMetaDefault(), settings: keep }; this.cursor2 = 0; this.say('PROGRESS RESET'); }
+            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...defaultMeta(), settings: keep }; this.tier = 0; this.cursor2 = 0; this.say('PROGRESS RESET'); }
             else this.cursor2 = 1;
           }
           break;
@@ -751,6 +850,7 @@ class Game {
         'Coins come from ghosts, fruit and clears. Spend them at the Fruit Stand on lives and rerolls.',
         'Ghost Souls come from every run, win or lose. Spend them in the Soul Shop to unlock fruits, perks and skins.',
         'Later mazes add modifiers and elite ghosts: SPEEDY (streaks), SHIELDED (needs 2 hits), SPLITTER (cracks in two).',
+        ...(this.meta.tierUnlocked > 0 ? ['REINCARNATIONS: pick a tier with LEFT/RIGHT on the title screen. Each one adds new twists. PHANTOM elites flicker, then drift through walls.'] : []),
       ];
       let y = 270;
       for (const p of para) y += wrapText(c, p, VW / 2, y, VW - 100, 8, '#c8c0f0', 16) + 16;
@@ -776,10 +876,6 @@ class Game {
     if (this.input.back() || (this.input.confirm() && this.cursor === pages - 1)) { this.audio.ui('back'); this.go('title'); }
     else if (this.input.confirm()) this.cursor++;
   }
-}
-
-function loadMetaDefault(): MetaSave {
-  return { v: 1, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0, unlockedFruits: [], perks: {}, skin: '#ffe600', settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true } };
 }
 
 void T;

@@ -1,9 +1,9 @@
 import type { Run } from './run';
-import { TOTAL_STAGES } from './run';
 import type { World } from '../sim/world';
 import { FRUIT_IDS, type FruitId } from '../data/fruits';
 import { MODIFIERS, type ModifierId } from '../sim/modifiers';
 import { UPGRADES, UPGRADE_BY_ID } from '../data/upgrades';
+import { MAX_TIER } from '../data/tiers';
 
 /** What the backtick console can touch. `main.ts` supplies the scene-level hooks. */
 export interface CheatCtx {
@@ -12,9 +12,10 @@ export interface CheatCtx {
   jumpToStage(index: number): void;
   rebuildStage(): void;
   toggleSlowmo(): boolean;
+  restartAtTier(tier: number): void;
 }
 
-export const CHEAT_HELP = 'GOD  LIVES n  COINS n  STAGE 1-15  CLEAR  BOSSHP n  FRUIT id  UPGRADE id|ALL  MOD id  POWER  SLOWMO';
+export const CHEAT_HELP = 'GOD  LIVES n  COINS n  STAGE n  TIER 0-5  CLEAR  BOSSHP n  FRUIT id  UPGRADE id|ALL  MOD id  POWER  SLOWMO';
 
 /**
  * Run one console command. Returns a message for the console log:
@@ -51,9 +52,16 @@ export function runCheat(input: string, ctx: CheatCtx): string {
     case 'STAGE': {
       if (!run) return noRun;
       const bad = needNum(); if (bad) return bad;
-      if (num < 1 || num > TOTAL_STAGES) return `? STAGE MUST BE 1-${TOTAL_STAGES}`;
+      if (num < 1 || num > run.plan.length) return `? STAGE MUST BE 1-${run.plan.length}`;
       ctx.jumpToStage(Math.floor(num) - 1);
       return ok(`STAGE ${Math.floor(num)}`);
+    }
+    case 'TIER': {
+      if (!run) return noRun;
+      const bad = needNum(); if (bad) return bad;
+      if (num < 0 || num > MAX_TIER) return `? TIER MUST BE 0-${MAX_TIER}`;
+      ctx.restartAtTier(Math.floor(num));
+      return ok(`RESTART ON R${Math.floor(num)}`);
     }
     case 'CLEAR':
       if (!world) return noRun;

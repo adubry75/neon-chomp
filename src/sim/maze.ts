@@ -3,7 +3,8 @@ import { DX, DY, type Dir, type Vec } from './types';
 export const T_OPEN = 0, T_WALL = 1, T_DOOR = 2, T_HOUSE = 3, T_VOID = 4;
 export const I_NONE = 0, I_PELLET = 1, I_POWER = 2, I_COIN = 3, I_CORE = 4;
 
-export type Walker = 'pac' | 'ghost' | 'eyes';
+/** 'phase' = a phantom mid-phase: interior walls count as floor. */
+export type Walker = 'pac' | 'ghost' | 'eyes' | 'phase';
 
 /**
  * Tile map. Coordinates: tile (tx,ty) has its center at (tx+0.5, ty+0.5).
@@ -53,6 +54,7 @@ export class Maze {
   walkable(tx: number, ty: number, who: Walker): boolean {
     const t = this.terrainAt(tx, ty);
     if (t === T_OPEN) return true;
+    if (who === 'phase') return t === T_WALL && tx > 0 && tx < this.w - 1 && ty > 0 && ty < this.h - 1;
     if (who === 'eyes') return t === T_DOOR || t === T_HOUSE;
     return false;
   }

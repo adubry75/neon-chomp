@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { classicMaze } from '../src/data/mazes';
 import { chaseTarget, chooseDir, SCATTER } from '../src/sim/ghostAI';
 import { advance, nextCenterAhead, tryCorner } from '../src/sim/movement';
-import { DOWN, LEFT, NONE, RIGHT, UP } from '../src/sim/types';
+import { DOWN, LEFT, NONE, RIGHT, TICK, UP } from '../src/sim/types';
+import { T_OPEN } from '../src/sim/maze';
+import { twistsFor } from '../src/data/tiers';
 import { generateMaze, validateMaze } from '../src/sim/mazegen';
 import { World, type StageConfig } from '../src/sim/world';
 import { defaultMods } from '../src/sim/mods';
 import { Rng } from '../src/sim/rng';
 import { FRUIT_IDS } from '../src/data/fruits';
+import { EVIL_PHASES, trailPoint } from '../src/sim/bosses/evil';
 
 describe('classic maze', () => {
   it('parses with arcade pellet count', () => {
@@ -119,9 +122,9 @@ describe('world', () => {
     expect(w.dotsEaten).toBeGreaterThan(10);
   });
   it('runs every modifier and boss without throwing', () => {
-    const mods = ['blackout', 'ice', 'conveyor', 'teleport', 'gates', 'mirror', 'ghostTrain'] as const;
+    const mods = ['blackout', 'ice', 'conveyor', 'teleport', 'gates', 'mirror', 'ghostTrain', 'derez'] as const;
     for (const mod of mods) simulate(3, 3000, { ...cfg(3), maze: generateMaze(99), modifiers: [mod] });
-    for (const boss of ['mega', 'train', 'eater'] as const) simulate(5, 4000, { ...cfg(5), boss });
+    for (const boss of ['mega', 'mega2', 'train', 'eater', 'null', 'evil'] as const) simulate(5, 4000, { ...cfg(5), boss });
     simulate(9, 4000, { ...cfg(9), mode: 'royale', players: [0, 1, 2, 3].map(s => ({ slot: s, color: '#fff' })) });
     simulate(9, 4000, { ...cfg(9), mode: 'squad', squadPac: 0, ghostPlayers: [1, 2], players: [0, 1, 2].map(s => ({ slot: s, color: '#fff' })) });
   });
@@ -214,5 +217,314 @@ describe('ice', () => {
     hold(w, LEFT, 3);
     hold(w, RIGHT, 1);
     expect(w.pacs[0].dir).toBe(RIGHT);
+  });
+});
+
+describe('evil pac', () => {
+  const boot = (seed = 31) => {
+    const w = new World({ ...cfg(seed), maze: generateMaze(777), boss: 'evil', level: 16 });
+    w.phase = 'play';
+    return w;
+  };
+  /** Walk P1 around with a changing held direction. */
+  const walk = (w: World, ticks: number, seed = 5) => {
+    const rng = new Rng(seed);
+    let dir = LEFT as 0 | 1 | 2 | 3;
+    for (let i = 0; i < ticks; i++) {
+      if (i % 25 === 0) dir = rng.int(4) as 0 | 1 | 2 | 3;
+      w.setInput(0, dir, false);
+      w.pacs[0].invulnT = 1; // keep P1 alive so the trail keeps growing
+      w.update();
+    }
+  };
+  it('waits off-trail, then follows P1 exactly `delay` seconds behind', () => {
+    const w = boot();
+    expect(w.evil!.mode).toBe('gone');
+    walk(w, 60);
+    expect(w.evil!.mode).toBe('gone'); // trail is only 1s long
+    walk(w, 240);
+    const b = w.evil!;
+    expect(b.mode).toBe('follow');
+    expect(b.delay).toBeLessThan(EVIL_PHASES[0].delay); // closing in
+    expect(b.delay).toBeGreaterThanOrEqual(EVIL_PHASES[0].min);
+    const pt = trailPoint(w, b.delay)!;
+    expect(b.x).toBe(pt.x); expect(b.y).toBe(pt.y);
+  });
+  it('flees from a powered Pac and loses a phase when caught', () => {
+    const w = boot();
+    walk(w, 300);
+    w.cheatPower(); w.update();
+    const b = w.evil!;
+    expect(b.mode).toBe('flee');
+    const p = w.pacs[0]; p.x = b.x; p.y = b.y;
+    w.update();
+    expect(b.hp).toBe(2);
+    expect(b.phase).toBe(1);
+    expect(b.mode).toBe('gone');
+    expect(w.ghosts.some(g => g.kind === 'blinky')).toBe(true);
+  });
+  it('does not flee again on the same power pellet after a hit', () => {
+    const w = boot();
+    walk(w, 300);
+    w.cheatPower(); w.update();
+    const b = w.evil!;
+    w.pacs[0].x = b.x; w.pacs[0].y = b.y; w.update();
+    w.powerT = 60; // power still running
+    walk(w, 200);
+    expect(b.mode).toBe('follow');
+  });
+  it('goes down after 3 hits', () => {
+    const w = boot();
+    for (let k = 0; k < 3; k++) {
+      w.powerT = 0; w.hitStop = 0;
+      walk(w, 320, k + 1);
+      expect(w.evil!.mode).toBe('follow');
+      w.cheatPower(); w.hitStop = 0; w.update();
+      const b = w.evil!, p = w.pacs[0];
+      p.x = b.x; p.y = b.y; p.state = 'alive'; w.hitStop = 0; w.update();
+    }
+    expect(w.evil!.hp).toBe(0);
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('is deterministic', () => {
+    const run = () => simulate(8, 4000, { ...cfg(8), maze: generateMaze(55), boss: 'evil', level: 16 });
+    const a = run(), b = run();
+    expect(a.score).toBe(b.score);
+    expect(a.evil!.x).toBe(b.evil!.x);
+    expect(a.lives).toBe(b.lives);
+  });
+});
+
+describe('phantom elites', () => {
+  it('phase through walls and are always back on an open tile when solid', () => {
+    const w = new World({ ...cfg(12), maze: generateMaze(321), level: 12, twists: { ...twistsFor(1) } });
+    w.phase = 'play';
+    for (const g of w.ghosts) if (g.kind !== 'blinky') { g.elite = 'phantom'; g.phaseT = 0.5; }
+    let sawInWall = false;
+    for (let i = 0; i < 3000; i++) {
+      w.pacs[0].invulnT = 1; w.phase = 'play';
+      w.setInput(0, [UP, LEFT, DOWN, RIGHT][(i / 40 | 0) % 4] as 0, false);
+      w.update();
+      for (const g of w.ghosts) {
+        if (g.state !== 'active' || g.elite !== 'phantom') continue;
+        const open = w.maze.terrainAt(Math.floor(g.x), Math.floor(g.y)) === T_OPEN;
+        if (!open) { sawInWall = true; expect(g.phasing).toBe(true); }
+      }
+    }
+    expect(sawInWall).toBe(true);
+  });
+  it('only appear from R1 on', () => {
+    const count = (tier: number) => {
+      let n = 0;
+      for (let s = 0; s < 60; s++) n += new World({ ...cfg(s), level: 10, twists: twistsFor(tier) }).ghosts.filter(g => g.elite === 'phantom').length;
+      return n;
+    };
+    expect(count(0)).toBe(0);
+    expect(count(1)).toBeGreaterThan(0);
+  });
+});
+
+describe('lime', () => {
+  it('hops Pac through a 1-thick wall when pushing into it from a standstill', () => {
+    const w = new World(cfg(3));
+    w.phase = 'play';
+    const p = w.pacs[0];
+    w.applyFruit(p, 'lime');
+    expect(p.phaseCharges).toBe(2);
+    // classic maze walls are 2 thick: find floor, 2 wall tiles below it, then floor
+    const m = w.maze;
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 1; y < m.h - 4 && !spot; y++) for (let x = 1; x < m.w - 1 && !spot; x++) {
+      if (m.terrainAt(x, y) === T_OPEN && m.terrainAt(x, y + 1) === 1 && m.terrainAt(x, y + 2) === 1 && m.terrainAt(x, y + 3) === T_OPEN) spot = { x, y };
+    }
+    expect(spot).not.toBeNull();
+    p.x = spot!.x + 0.5; p.y = spot!.y + 0.5; p.dir = DOWN; p.moving = false; p.invulnT = 5;
+    w.setInput(0, DOWN, false);
+    w.update();
+    expect(Math.floor(p.y)).toBe(spot!.y + 3);
+    expect(p.phaseCharges).toBe(1);
+  });
+});
+
+describe('R1 upgrades', () => {
+  it('Glow Up grants invulnerability when power ends', () => {
+    const mods = defaultMods(); mods.powerGrace = 1.5;
+    const w = new World({ ...cfg(2), mods });
+    w.phase = 'play'; w.powerT = TICK / 2;
+    w.update();
+    expect(w.pacs[0].invulnT).toBeGreaterThan(1.3);
+  });
+  it('Combo Keeper adds power time per ghost', () => {
+    const mods = defaultMods(); mods.ghostTimeBonus = 0.75;
+    const w = new World({ ...cfg(2), mods });
+    w.phase = 'play';
+    for (let i = 0; i < 200; i++) w.update();
+    const g = w.ghosts.find(g => g.state === 'active')!;
+    w.cheatPower();
+    const before = w.powerT;
+    const p = w.pacs[0]; p.x = g.x; p.y = g.y; p.state = 'alive';
+    w.update();
+    expect(w.powerT).toBeGreaterThan(before);
+  });
+});
+
+describe('R2', () => {
+  it('Mega Blinky EX splits at half health and needs 6 hits', () => {
+    const w = new World({ ...cfg(21), boss: 'mega2' });
+    w.phase = 'play';
+    let hits = 0;
+    for (let k = 0; k < 10 && !w.bossDefeated; k++) {
+      for (let i = 0; i < 60; i++) { w.pacs[0].invulnT = 1; w.update(); }
+      const b = w.megas.find(b => b.hp > 0)!;
+      b.invulnT = 0; w.powerT = 5; w.hitStop = 0;
+      const p = w.pacs[0]; p.x = b.x; p.y = b.y; p.state = 'alive';
+      w.update(); hits++;
+      if (hits === 2) expect(w.megas.length).toBe(2);
+    }
+    expect(hits).toBe(6);
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('Lean Maze leaves 2 power pellets; Iron Ghosts shields everyone but Blinky', () => {
+    const mods = defaultMods(); mods.leanMaze = true; mods.ironGhosts = true;
+    const w = new World({ ...cfg(4), mods });
+    expect(Array.from(w.maze.items).filter(i => i === 2).length).toBe(2);
+    expect(w.ghosts.filter(g => g.kind !== 'blinky').every(g => g.shield === 1)).toBe(true);
+  });
+  it('Phantom Plague turns every elite into a phantom', () => {
+    const mods = defaultMods(); mods.allPhantom = true; mods.eliteChance = 1;
+    const elites = [1, 2, 3, 4, 5, 6].flatMap(s => new World({ ...cfg(s), mods, level: 10 }).ghosts.filter(g => g.elite));
+    expect(elites.length).toBeGreaterThan(0);
+    expect(elites.every(g => g.elite === 'phantom')).toBe(true);
+  });
+});
+
+describe('R3', () => {
+  it('de-rez picks mirrored thin walls, opens half of them, and never reforms on top of anything', () => {
+    for (const seed of [11, 22, 33, 44]) {
+      const w = new World({ ...cfg(seed), maze: generateMaze(seed * 13), modifiers: ['derez'] });
+      w.phase = 'play';
+      expect(w.derez.length).toBeGreaterThanOrEqual(3);
+      for (const d of w.derez) for (const t of d.tiles) expect(w.maze.terrainAt(t.x, t.y)).toBe(1);
+      let sawOpen = false;
+      const rng = new Rng(seed);
+      for (let i = 0; i < 2400; i++) {
+        w.pacs[0].invulnT = 1; w.phase = 'play';
+        if (i % 30 === 0) w.setInput(0, rng.int(4) as 0, false);
+        w.update();
+        const open = w.derez.filter(d => d.open);
+        if (open.length) { sawOpen = true; expect(open.length).toBeLessThan(w.derez.length); }
+        // nothing may ever be standing inside a solid wall
+        for (const p of w.pacs) expect(w.maze.terrainAt(Math.floor(p.x), Math.floor(p.y))).not.toBe(1);
+        for (const g of w.ghosts) if (g.state === 'active' && !g.phasing) expect(w.maze.terrainAt(Math.floor(g.x), Math.floor(g.y))).not.toBe(1);
+      }
+      expect(sawOpen).toBe(true);
+    }
+  });
+  it('the Null needs its keys eaten before it can be hit, and rewrites the maze after each hit', () => {
+    const w = new World({ ...cfg(5), maze: generateMaze(99), boss: 'null', level: 17 });
+    w.phase = 'play';
+    const b = w.nullBoss!;
+    const p = w.pacs[0];
+    // touching it while shielded hurts
+    p.x = b.x; p.y = b.y; p.invulnT = 0; w.update();
+    expect(w.phase).toBe('dying');
+    w.phase = 'play';
+    for (let hit = 0; hit < 3; hit++) {
+      const before = w.maze;
+      for (let k = 0; k < 4; k++) {
+        const i = w.maze.items.indexOf(4);
+        expect(i).toBeGreaterThanOrEqual(0);
+        w.phase = 'play'; w.hitStop = 0; p.state = 'alive'; p.invulnT = 5;
+        p.x = (i % w.maze.w) + 0.5; p.y = Math.floor(i / w.maze.w) + 0.5;
+        w.update();
+      }
+      expect(b.exposedT).toBeGreaterThan(0);
+      w.hitStop = 0; p.x = b.x; p.y = b.y; w.update();
+      expect(b.hp).toBe(2 - hit);
+      if (hit < 2) expect(w.maze).not.toBe(before);
+    }
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('the Null shields up again if you are too slow', () => {
+    const w = new World({ ...cfg(5), maze: generateMaze(99), boss: 'null', level: 17 });
+    w.phase = 'play';
+    const b = w.nullBoss!;
+    b.keysLeft = 1;
+    const i = w.maze.items.indexOf(4);
+    const p = w.pacs[0]; p.invulnT = 99; p.x = (i % w.maze.w) + 0.5; p.y = Math.floor(i / w.maze.w) + 0.5;
+    w.update();
+    expect(b.exposedT).toBeGreaterThan(0);
+    p.x = 1.5; p.y = 1.5;
+    for (let k = 0; k < 60 * 7; k++) { p.invulnT = 99; w.phase = 'play'; w.update(); }
+    expect(b.exposedT).toBeLessThanOrEqual(0);
+    expect(b.keysLeft).toBe(4);
+  });
+});
+
+describe('R4', () => {
+  it('Train King EX phases through walls', () => {
+    const w = new World({ ...cfg(21), maze: generateMaze(31), boss: 'train2' });
+    w.phase = 'play';
+    const king = w.ghosts.find(g => g.king)!;
+    expect(king.elite).toBe('phantom');
+    let inWall = false;
+    for (let i = 0; i < 3000 && !inWall; i++) {
+      w.pacs[0].invulnT = 1; w.phase = 'play';
+      w.setInput(0, [UP, LEFT, DOWN, RIGHT][(i / 45 | 0) % 4] as 0, false);
+      w.update();
+      if (king.state === 'active' && w.maze.terrainAt(Math.floor(king.x), Math.floor(king.y)) === 1) inWall = true;
+    }
+    expect(inWall).toBe(true);
+  });
+  it('ghost memory learns a junction after 6 passes and sends Pinky there', () => {
+    const w = new World({ ...cfg(3), twists: twistsFor(4) });
+    w.phase = 'play';
+    const m = w.maze;
+    const j = m.openTiles().find(t => ([UP, LEFT, DOWN, RIGHT] as const).filter(d => m.canGo(t.x, t.y, d, 'pac')).length >= 3 && t.y > 20)!;
+    const p = w.pacs[0];
+    for (let k = 0; k < 6; k++) {
+      p.x = j.x + 0.5; p.y = j.y + 0.5; p.lastTile = -1; p.invulnT = 5;
+      w.update();
+      p.x = j.x + 1.5; p.lastTile = -1; // step off so the next visit counts again
+    }
+    expect(w.learned).toContain(j.y * m.w + j.x);
+    const pinky = w.ghosts.find(g => g.kind === 'pinky')!;
+    w.modeIdx = 1; // chase
+    p.x = j.x + 0.5; p.y = j.y + 0.5;
+    expect(w.ghostTarget(pinky)).toEqual({ x: j.x, y: j.y });
+  });
+  it('ghost memory is off below R4', () => {
+    const w = new World({ ...cfg(3), twists: twistsFor(3) });
+    w.phase = 'play';
+    for (let i = 0; i < 4000; i++) { w.pacs[0].invulnT = 1; w.setInput(0, [LEFT, UP, RIGHT, DOWN][(i / 30 | 0) % 4] as 0, false); w.update(); }
+    expect(w.learned.length).toBe(0);
+  });
+  it('a kiwi decoy draws every ghost and pops when touched', () => {
+    const w = new World(cfg(3));
+    w.phase = 'play';
+    w.applyFruit(w.pacs[0], 'kiwi');
+    const d = w.pacs.find(p => p.kind === 'decoy')!;
+    expect(d).toBeDefined();
+    for (const g of w.ghosts) expect(w.ghostTarget(g)).toEqual({ x: Math.floor(d.x), y: Math.floor(d.y) });
+    const g = w.ghosts[0]; g.state = 'active'; g.x = d.x; g.y = d.y; g.fright = false;
+    const p = w.pacs[0]; p.x = 1.5; p.y = 1.5;
+    w.update();
+    expect(w.pacs.some(p => p.kind === 'decoy')).toBe(false);
+    expect(w.phase).toBe('play');
+  });
+  it('Rewind turns a fatal hit into a 3s jump back', () => {
+    const mods = defaultMods(); mods.rewinds = 1;
+    const w = new World({ ...cfg(4), mods });
+    w.phase = 'play';
+    const p = w.pacs[0];
+    for (let i = 0; i < 400; i++) { p.invulnT = 1; w.setInput(0, [LEFT, UP, RIGHT, DOWN][(i / 50 | 0) % 4] as 0, false); w.update(); }
+    p.invulnT = 0;
+    const back = w.trail[Math.max(0, w.trail.length - 181)];
+    w.hurtPac(p, -1);
+    expect(w.phase).toBe('play');
+    expect(p.x).toBe(Math.floor(back.x) + 0.5);
+    expect(w.rewindsLeft).toBe(0);
+    w.hurtPac(p, -1);
+    expect(w.phase).toBe('dying');
   });
 });

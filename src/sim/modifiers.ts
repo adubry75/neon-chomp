@@ -1,9 +1,9 @@
-import { I_NONE, T_OPEN, type Maze } from './maze';
+import { I_NONE, T_OPEN, T_WALL, type Maze } from './maze';
 import type { Rng } from './rng';
-import type { Dozer, Gate, Teleporter } from './entities';
+import type { DerezGroup, Dozer, Gate, Teleporter } from './entities';
 import { DIRS, DX, DY, type Vec } from './types';
 
-export type ModifierId = 'blackout' | 'ice' | 'conveyor' | 'teleport' | 'gates' | 'mirror' | 'ghostTrain';
+export type ModifierId = 'blackout' | 'ice' | 'conveyor' | 'teleport' | 'gates' | 'mirror' | 'ghostTrain' | 'derez';
 
 /** Ice: tiles Pac slides after pressing a new turn before the turn can happen. */
 export const ICE_SLIDE = 0.5;
@@ -15,6 +15,7 @@ export const MODIFIERS: Record<ModifierId, { name: string; desc: string; color: 
   teleport:   { name: 'TELEPORTERS', desc: 'Paired portals zap anything that enters.', color: '#ff5cf0' },
   gates:      { name: 'SHIFTING WALLS', desc: 'Neon gates open and close every few seconds.', color: '#ff6a3d' },
   mirror:     { name: 'MIRROR WORLD', desc: 'Left is right. Right is left. Good luck.', color: '#5cffc8' },
+  derez:      { name: 'DE-REZ', desc: 'Walls dissolve into shortcuts, then reform. Watch the flicker.', color: '#7d8cff' },
   ghostTrain: { name: 'GHOST TRAIN', desc: 'Sleeping ghosts wake and join a conga line.', color: '#ff2d55' },
 };
 
@@ -123,3 +124,35 @@ export function setupDozers(m: Maze, rng: Rng, count: number): Dozer[] {
 }
 
 export const clearItem = (m: Maze, p: Vec) => m.setItem(p.x, p.y, I_NONE);
+
+/**
+ * De-rez: short wall plugs (1-2 tiles, with corridor on both ends) that dissolve into shortcuts and reform.
+ * Each group is a plug plus its mirror image. Opening walls can never disconnect the maze, so no connectivity check is needed.
+ */
+export function setupDerez(m: Maze, rng: Rng): DerezGroup[] {
+  const inner = (x: number, y: number) => x >= 1 && x <= m.w - 2 && y >= 1 && y <= m.h - 2 && !(y >= 10 && y <= 18 && x >= 8 && x <= 19);
+  const wall = (x: number, y: number) => m.terrainAt(x, y) === T_WALL && inner(x, y);
+  const open = (x: number, y: number) => m.terrainAt(x, y) === T_OPEN;
+  const plugs: Vec[][] = [];
+  for (let y = 1; y < m.h - 1; y++) for (let x = 1; x < m.w - 1; x++) {
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      if (!open(x - dx, y - dy) || !wall(x, y)) continue;
+      if (open(x + dx, y + dy)) plugs.push([{ x, y }]);
+      else if (wall(x + dx, y + dy) && open(x + 2 * dx, y + 2 * dy)) plugs.push([{ x, y }, { x: x + dx, y: y + dy }]);
+    }
+  }
+  const key = (t: Vec[]) => t.map(p => p.y * m.w + p.x).sort((a, b) => a - b).join(',');
+  const mirror = (t: Vec[]) => t.map(p => ({ x: m.w - 1 - p.x, y: p.y }));
+  const left = plugs.filter(t => t.every(p => p.x < m.w / 2) || key(mirror(t)) === key(t));
+  rng.shuffle(left);
+  const out: DerezGroup[] = [];
+  const taken: Vec[] = [];
+  for (const t of left) {
+    if (out.length >= 5) break;
+    if (t.some(p => taken.some(q => Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < 4))) continue;
+    const tiles = key(mirror(t)) === key(t) ? t : [...t, ...mirror(t)];
+    taken.push(...tiles);
+    out.push({ tiles, open: false });
+  }
+  return out;
+}

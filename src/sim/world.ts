@@ -6,11 +6,15 @@ import { SCATTER, chaseTarget, chooseDir, type GhostKind } from './ghostAI';
 import { levelParams, type LevelParams } from '../data/levels';
 import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
-import type { Dozer, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
-import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
+import type { DerezGroup, Dozer, EvilBoss, NullBoss, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
+import { resetEvil, setupEvil, updateEvil } from './bosses/evil';
+import { resetMegas, setupMega, updateMegas } from './bosses/mega';
+import { eatKey, resetNull, setupNull, updateNull } from './bosses/null';
+import { NO_TWISTS, type Twists } from '../data/tiers';
+import { ICE_SLIDE, setupConveyors, setupDerez, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
-export type BossId = 'mega' | 'train' | 'eater';
+export type BossId = 'mega' | 'mega2' | 'train' | 'train2' | 'eater' | 'null' | 'evil';
 
 export interface PlayerInfo { slot: number; color: string }
 export interface PlayerInput { dir: Dir; action: boolean }
@@ -31,6 +35,8 @@ export interface StageConfig {
   squadPac?: number;
   ghostPlayers?: number[];
   royaleTime?: number;
+  /** Game++ tier twists (default: none). */
+  twists?: Twists;
 }
 
 export const GHOST_COLORS: Record<GhostKind, string> = {
@@ -38,6 +44,12 @@ export const GHOST_COLORS: Record<GhostKind, string> = {
 };
 
 const EXTRA_LIFE_EVERY = 25000;
+/** Ghost memory: passes before a junction is learned. */
+export const LEARN_VISITS = 6;
+/** De-rez cycle: walls stay solid, then half of them dissolve; the last DEREZ_WARN before reforming flickers. */
+export const DEREZ_SOLID = 5, DEREZ_OPEN = 4, DEREZ_WARN = 1;
+/** Phantom cycle: solid (the last PHANTOM_WARN of it flickers), then phasing. */
+export const PHANTOM_SOLID = 6.4, PHANTOM_WARN = 0.9, PHANTOM_PHASE = 2.2;
 const FRUIT_LIFETIME = 10;
 
 export class World {
@@ -46,6 +58,7 @@ export class World {
   pristine: Maze;
   params: LevelParams;
   mods: Mods;
+  twists: Twists;
   rng: Rng;
   time = 0;
   phase: 'ready' | 'play' | 'dying' | 'clear' | 'over' = 'ready';
@@ -64,6 +77,9 @@ export class World {
   teleporters: Teleporter[] = [];
   gates: Gate[] = [];
   gateT = 6;
+  /** De-rez wall plugs (open = dissolved into floor). */
+  derez: DerezGroup[] = [];
+  derezT = DEREZ_SOLID;
   inputs: PlayerInput[] = [];
   prevAction: boolean[] = [];
   events: GameEvent[] = [];
@@ -90,14 +106,27 @@ export class World {
   ghostScores: Record<number, number> = {};
   royaleT: number;
   powerRespawn: { x: number; y: number; t: number }[] = [];
-  mega: MegaBoss | null = null;
+  /** Mega Blinky (two bodies after the R2 remix splits him). */
+  megas: MegaBoss[] = [];
+  get mega(): MegaBoss | null { return this.megas[0] ?? null; }
   voidY = Infinity;
   voidSpeed = 0.42;
   coresLeft = 0;
   bossDefeated = false;
+  evil: EvilBoss | null = null;
+  nullBoss: NullBoss | null = null;
+  /** Ghost memory (R4): passes per junction tile, and the junctions the ghosts have learned. */
+  junctionVisits = new Map<number, number>();
+  learned: number[] = [];
+  /** Rewind upgrade uses left in this maze. */
+  rewindsLeft: number;
+  /** P1's position every play tick (newest last), for Evil Pac and Rewind. */
+  trail: Vec[] = [];
   /** Cheat: main pacs can't be hurt. */
   god = false;
   private idGen = 1;
+  /** Echo Pellet already used this maze. */
+  private echoUsed = false;
   private tpCool = new WeakMap<object, number>();
 
   constructor(cfg: StageConfig) {
@@ -106,26 +135,39 @@ export class World {
     this.pristine = cfg.maze.clone();
     this.params = levelParams(cfg.level);
     this.mods = cfg.mods;
+    this.twists = cfg.twists ?? NO_TWISTS;
     this.rng = new Rng(cfg.seed);
     this.score = cfg.scoreBase;
     this.lives = cfg.lives;
     this.shieldsLeft = cfg.mods.shields;
+    this.rewindsLeft = cfg.mods.rewinds;
     this.fire = new Float32Array(this.maze.w * this.maze.h);
     this.nextFruitAt = Math.round(60 / cfg.mods.fruitRate);
     this.royaleT = cfg.royaleTime ?? 150;
     for (let i = 0; i < 4; i++) { this.inputs.push({ dir: NONE, action: false }); this.prevAction.push(false); }
 
     const m = this.maze;
+    if (cfg.mode === 'run' && !cfg.boss && cfg.mods.leanMaze) this.leanOut();
     const mods = cfg.modifiers;
     if (mods.includes('conveyor')) this.conveyor = setupConveyors(m, this.rng);
     if (mods.includes('teleport')) this.teleporters = setupTeleporters(m, this.rng);
     if (mods.includes('gates')) this.gates = setupGates(m, this.rng);
+    if (mods.includes('derez')) this.derez = setupDerez(m, this.rng);
     if (mods.includes('ghostTrain')) this.dozers = setupDozers(m, this.rng, 8);
 
     this.spawnPacs();
     this.spawnGhosts();
     this.setupBoss();
     this.resetPositions(true);
+  }
+
+  /** Heat "Lean Maze": keep only 2 power pellets (mirrored layouts keep one per side when they can). */
+  private leanOut() {
+    const m = this.maze, spots = m.powerSpots.filter(p => m.itemAt(p.x, p.y) === I_POWER);
+    if (spots.length <= 2) return;
+    const keep = new Set(this.rng.shuffle([...spots]).slice(0, 2));
+    for (const p of spots) if (!keep.has(p)) m.setItem(p.x, p.y, I_NONE);
+    m.countPellets();
   }
 
   has(mod: ModifierId) { return this.cfg.modifiers.includes(mod); }
@@ -139,7 +181,7 @@ export class World {
     return {
       id: this.idGen++, player, kind, x: this.maze.pacStart.x, y: this.maze.pacStart.y, dir: LEFT, desired: NONE,
       state: 'alive', stateT: 0, color, mouth: 0, moving: false, powerT: 0, invulnT: 0, fx: {},
-      dashCharges: 0, dashT: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
+      dashCharges: 0, dashT: 0, phaseCharges: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
     };
   }
 
@@ -153,11 +195,12 @@ export class World {
     }
   }
 
-  private newGhost(kind: GhostKind, hx: number, hy: number): Ghost {
+  newGhost(kind: GhostKind, hx: number, hy: number): Ghost {
     return {
       id: this.idGen++, kind, x: hx, y: hy, dir: LEFT, state: 'house', homeX: hx, homeY: hy, fright: false,
       reversePending: false, stunT: 0, color: GHOST_COLORS[kind], elite: null, shield: 0, human: -1, desired: NONE,
       dotCounter: 0, releaseT: -1, splinter: false, lifeT: 0, king: false, history: [], eatenFlash: 0, bob: this.rng.next() * 6,
+      phaseT: PHANTOM_SOLID * (0.5 + this.rng.next() * 0.5), phasing: false,
     };
   }
 
@@ -165,8 +208,10 @@ export class World {
     const m = this.maze, c = this.cfg;
     const hx = m.houseCenter.x, hy = m.houseCenter.y;
     const kinds: GhostKind[] =
-      c.boss === 'mega' ? ['blinky', 'pinky'] :
-      c.boss === 'train' ? ['blinky', 'pinky', 'inky'] :
+      c.boss === 'mega' || c.boss === 'mega2' ? ['blinky', 'pinky'] :
+      c.boss === 'train' || c.boss === 'train2' ? ['blinky', 'pinky', 'inky'] :
+      c.boss === 'evil' ? [] :
+      c.boss === 'null' ? ['blinky', 'inky'] :
       c.mode === 'royale' ? ['blinky', 'pinky', 'inky'] :
       ['blinky', 'pinky', 'inky', 'clyde'];
     if (c.mode === 'run' && this.mods.hunted && !c.boss) kinds.push('stalker');
@@ -177,12 +222,15 @@ export class World {
 
     // Elite variants (never Blinky, never in versus modes)
     if (c.mode === 'run') {
-      const chance = Math.min(0.6, Math.max(0, (c.level - 4) * 0.07) + this.mods.eliteChance);
+      const phantom = this.twists.phantom;
+      const chance = Math.min(0.6, Math.max(0, (c.level - 4) * 0.07) + this.mods.eliteChance + (phantom ? 0.12 : 0));
+      const pool = phantom ? (['speedy', 'shielded', 'splitter', 'phantom', 'phantom'] as const) : (['speedy', 'shielded', 'splitter'] as const);
       for (const g of this.ghosts) {
         if (g.kind === 'blinky' || !this.rng.chance(chance)) continue;
-        g.elite = this.rng.pick(['speedy', 'shielded', 'splitter'] as const);
+        g.elite = this.mods.allPhantom ? 'phantom' : this.rng.pick(pool);
         if (g.elite === 'shielded') g.shield = 1;
       }
+      if (this.mods.ironGhosts) for (const g of this.ghosts) if (g.kind !== 'blinky') g.shield = Math.max(g.shield, 1);
     }
     if (c.mode === 'squad' && c.ghostPlayers) {
       c.ghostPlayers.forEach((slot, i) => { if (this.ghosts[i]) this.ghosts[i].human = slot; });
@@ -191,17 +239,22 @@ export class World {
 
   private setupBoss() {
     const b = this.cfg.boss;
-    if (b === 'mega') {
-      this.mega = { x: 14, y: 5.5, hp: 4, maxHp: 4, r: 1.9, invulnT: 2, spawnT: 7, vx: 0, vy: 0 };
-    } else if (b === 'train') {
+    if (b === 'mega' || b === 'mega2') {
+      this.megas = setupMega(b === 'mega2');
+    } else if (b === 'train' || b === 'train2') {
       const king = this.ghosts[0];
       king.king = true; king.color = '#ffd23d';
+      if (b === 'train2') king.elite = 'phantom';
       const colors = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
       for (let i = 0; i < 12; i++) this.cars.push({ x: king.x, y: king.y, alive: true, color: colors[i % 4], wobble: i * 0.7 });
     } else if (b === 'eater') {
       this.voidY = this.maze.h + 1;
       this.coresLeft = 3;
       this.placeCore();
+    } else if (b === 'evil') {
+      this.evil = setupEvil(this);
+    } else if (b === 'null') {
+      this.nullBoss = setupNull(this);
     }
   }
 
@@ -217,14 +270,14 @@ export class World {
       } else {
         const s = this.safeSpawn(); p.x = s.x; p.y = s.y; p.dir = i % 2 ? RIGHT : LEFT;
       }
-      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
+      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.phaseCharges = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
       p.invulnT = initial ? 0 : 1.2; p.trail = [];
     });
     const stagger = [0, 1.5, 4, 6.5, 9];
     let houseIdx = 0;
     for (const g of this.ghosts) {
       if (g.splinter) { g.state = 'gone'; continue; }
-      g.x = g.homeX; g.y = g.homeY; g.fright = false; g.stunT = 0; g.reversePending = false; g.history = [];
+      g.x = g.homeX; g.y = g.homeY; g.fright = false; g.stunT = 0; g.reversePending = false; g.history = []; g.phasing = false;
       if (g.kind === 'blinky') { g.state = 'active'; g.dir = LEFT; continue; }
       g.state = 'house'; g.dir = houseIdx % 2 ? DOWN : UP;
       if (!initial || this.cfg.mode === 'squad' || this.cfg.boss) g.releaseT = stagger[houseIdx + 1];
@@ -234,11 +287,14 @@ export class World {
     this.powerT = 0; this.freezeT = 0; this.frenzyT = 0;
     if (!this.mods.chainChomp) this.combo = 0;
     this.peels = [];
-    if (this.cfg.boss === 'train') {
+    if (this.cfg.boss === 'train' || this.cfg.boss === 'train2') {
       const king = this.ghosts.find(g => g.king);
       if (king) for (const c of this.cars) { c.x = king.x; c.y = king.y; }
     } else if (this.cars.length) this.disbandTrain();
-    if (this.mega) { this.mega.x = 14; this.mega.y = 4.5; this.mega.vx = this.mega.vy = 0; this.mega.invulnT = 2; }
+    if (this.megas.length) resetMegas(this);
+    this.trail = [];
+    if (this.evil) resetEvil(this);
+    if (this.nullBoss) resetNull(this);
   }
 
   private safeSpawn(): Vec {
@@ -300,10 +356,13 @@ export class World {
   private step() {
     this.updateTimers();
     for (const p of [...this.pacs]) this.updatePac(p);
+    this.recordTrail();
     for (const g of [...this.ghosts]) this.updateGhost(g);
     this.updateTrain();
-    this.updateMega();
+    updateMegas(this);
     this.updateEater();
+    updateEvil(this);
+    updateNull(this);
     this.collide();
     this.checkEnd();
   }
@@ -316,6 +375,7 @@ export class World {
         this.powerT = 0;
         for (const g of this.ghosts) g.fright = false;
         if (!mods.chainChomp) this.combo = 0;
+        if (mods.powerGrace > 0) for (const p of this.mainPacs) if (p.state === 'alive') p.invulnT = Math.max(p.invulnT, mods.powerGrace);
         this.emit({ t: 'powerEnd' });
       }
     } else if (this.freezeT <= 0) {
@@ -360,6 +420,8 @@ export class World {
       }
     }
 
+    if (this.derez.length) this.updateDerez();
+
     // house release on idle
     if (this.idleT > this.params.idleRelease) {
       const g = this.preferredHouseGhost();
@@ -369,6 +431,47 @@ export class World {
     if (this.cfg.mode === 'royale') {
       this.royaleT -= TICK;
       if (this.royaleT <= 0) this.endGame('over');
+    }
+  }
+
+  /** Swap in a new layout mid-stage (the Null boss). Everything on the board is snapped onto the new floor. */
+  rewriteMaze(next: Maze) {
+    this.maze = next.clone();
+    this.pristine = next.clone();
+    this.fire.fill(0); this.powerRespawn = []; this.fruit = null; this.peels = [];
+    const tiles = this.maze.openTiles();
+    const snap = (a: { x: number; y: number }) => {
+      let best = tiles[0], bd = Infinity;
+      for (const t of tiles) { const d = dist2(t.x + 0.5, t.y + 0.5, a.x, a.y); if (d < bd) { bd = d; best = t; } }
+      a.x = best.x + 0.5; a.y = best.y + 0.5;
+    };
+    for (const p of this.pacs) if (p.state !== 'out') { snap(p); p.invulnT = Math.max(p.invulnT, 1.5); p.iceSlide = 0; }
+    for (const g of this.ghosts) if (g.state === 'active' || g.state === 'eyes') { snap(g); g.phasing = false; }
+    this.emit({ t: 'rewrite' });
+  }
+
+  private recordTrail() {
+    const p = this.mainPacs[0];
+    if (!p || p.state !== 'alive') return;
+    this.trail.push({ x: p.x, y: p.y });
+    if (this.trail.length > 600) this.trail.splice(0, this.trail.length - 600);
+  }
+
+  private updateDerez() {
+    this.derezT -= TICK;
+    if (this.derezT > 0) return;
+    const m = this.maze;
+    const open = this.derez.filter(d => d.open);
+    if (open.length) {
+      if (open.some(d => d.tiles.some(t => this.occupied(t.x, t.y)))) { this.derezT = 0.3; return; }
+      for (const d of open) { d.open = false; for (const t of d.tiles) m.terrain[t.y * m.w + t.x] = T_WALL; }
+      this.derezT = DEREZ_SOLID;
+      this.emit({ t: 'rezIn' });
+    } else {
+      const order = this.rng.shuffle([...this.derez]);
+      for (const d of order.slice(0, Math.ceil(order.length / 2))) { d.open = true; for (const t of d.tiles) m.terrain[t.y * m.w + t.x] = T_OPEN; }
+      this.derezT = DEREZ_OPEN;
+      this.emit({ t: 'derez' });
     }
   }
 
@@ -432,6 +535,10 @@ export class World {
           this.emit({ t: 'peel', x: p.x, y: p.y });
         }
       }
+    } else if (p.kind === 'decoy') {
+      p.lifeT -= TICK;
+      if (p.lifeT <= 0) { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: '#8fd13a' }); }
+      return;
     } else if (p.kind === 'clone') {
       const owner = this.pacs.find(o => o.id === p.ownerId);
       if (!owner || owner.state !== 'alive' || !owner.fx.strawberry) { this.removePac(p); return; }
@@ -448,6 +555,7 @@ export class World {
       else if (!ice) tryCorner(p, p.desired, m);
       else if (p.desired !== NONE && p.desired !== p.dir && p.desired !== p.iceDir) { p.iceDir = p.desired; p.iceSlide = ICE_SLIDE; }
     }
+    if (p.phaseCharges > 0 && !p.moving && p.kind === 'main') this.phaseHop(p);
     const stepDist = this.pacSpeed(p) * TICK;
     if (ice) p.iceSlide = Math.max(0, p.iceSlide - stepDist);
 
@@ -475,6 +583,7 @@ export class World {
     } else this.eatAt(p, tx, ty);
 
     if (tile !== p.lastTile) {
+      if (p === this.mainPacs[0]) this.learnJunction(tile);
       if (p.fx.cherry && p.lastTile >= 0) { this.addScore(p, 20); this.emit({ t: 'trail', x: p.x, y: p.y }); }
       p.lastTile = tile;
     }
@@ -483,9 +592,38 @@ export class World {
     if (mag > 0 && p.kind === 'main') this.magnet(p, mag);
   }
 
+  /** Lime: stopped at a tile center, pushing into a wall up to 3 tiles thick with floor beyond it, so hop through. */
+  private phaseHop(p: Pac) {
+    const m = this.maze, d = p.desired;
+    if (d === NONE || !atCenter(p.x) || !atCenter(p.y)) return;
+    const tx = Math.floor(p.x), ty = Math.floor(p.y);
+    if (m.canGo(tx, ty, d, 'pac')) return;
+    let k = 1;
+    while (k <= 3 && m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'phase') && !m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'pac')) k++;
+    if (k === 1 || !m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'pac')) return;
+    const ox = p.x, oy = p.y;
+    p.x = m.wrapX(tx + DX[d] * k) + 0.5; p.y = ty + DY[d] * k + 0.5; p.dir = d;
+    p.phaseCharges--;
+    this.emit({ t: 'phaseHop', x: ox, y: oy, x2: p.x, y2: p.y, c: p.color });
+  }
+
+  /** Ghost memory: count P1's passes through junctions; busy ones become ambush spots. */
+  private learnJunction(tile: number) {
+    if (!this.twists.ghostMemory || this.cfg.mode !== 'run' || this.cfg.boss) return;
+    const m = this.maze, x = tile % m.w, y = (tile / m.w) | 0;
+    if (DIRS.filter(d => m.canGo(x, y, d, 'pac')).length < 3) return;
+    const n = (this.junctionVisits.get(tile) ?? 0) + 1;
+    this.junctionVisits.set(tile, n);
+    if (n >= LEARN_VISITS * this.mods.memorySlow && this.learned.length < 3 && !this.learned.includes(tile)) {
+      this.learned.push(tile);
+      this.emit({ t: 'learned', x: x + 0.5, y: y + 0.5 });
+    }
+  }
+
   private endFx(p: Pac, k: FruitId) {
     delete p.fx[k];
     if (k === 'pineapple') p.dashCharges = 0;
+    if (k === 'lime') p.phaseCharges = 0;
     if (k === 'strawberry') for (const c of this.pacs.filter(c => c.kind === 'clone' && c.ownerId === p.id)) this.removePac(c);
     this.emit({ t: 'fxEnd', s: k, p: p.player });
   }
@@ -568,6 +706,7 @@ export class World {
       } else {
         this.addScore(p, 50);
         this.power(p);
+        if (this.mods.powerEcho && !this.echoUsed && !this.cfg.boss && this.cfg.mode === 'run') { this.echoUsed = true; this.powerRespawn.push({ x: m.wrapX(tx), y: ty, t: 20 }); }
         if (this.cfg.boss || this.cfg.mode === 'royale') this.powerRespawn.push({ x: m.wrapX(tx), y: ty, t: this.cfg.mode === 'royale' ? 14 : 11 });
       }
       if (this.dotsEaten >= this.nextFruitAt && !this.fruit) {
@@ -583,7 +722,8 @@ export class World {
       this.addCoins(1);
       this.emit({ t: 'coin', x, y });
     } else if (it === I_CORE) {
-      this.eatCore(p, x, y);
+      if (this.nullBoss) eatKey(this, p, x, y);
+      else this.eatCore(p, x, y);
     }
   }
 
@@ -623,6 +763,7 @@ export class World {
       if (g.human >= 0 && g.state !== 'active') continue;
       g.fright = true;
       if (g.state === 'active') g.reversePending = true;
+      if (this.mods.powerStun > 0 && g.state === 'active') g.stunT = Math.max(g.stunT, this.mods.powerStun);
     }
     const owner = p.kind === 'main' ? p : this.pacs.find(o => o.id === p.ownerId) ?? p;
     owner.powerT = this.powerT;
@@ -683,6 +824,8 @@ export class World {
         if (id === 'strawberry') this.spawnClone(p);
         if (id === 'grapes') this.spawnMinis(p, dur);
         if (id === 'pineapple') p.dashCharges = 3;
+        if (id === 'lime') p.phaseCharges = 2;
+        if (id === 'kiwi') this.spawnDecoy(p, dur);
         if (id === 'banana') p.peelT = 0.2;
       }
     }
@@ -698,6 +841,14 @@ export class World {
     c.dir = p.dir === LEFT ? RIGHT : p.dir === RIGHT ? LEFT : p.dir;
     if (!this.maze.walkable(Math.floor(c.x), Math.floor(c.y), 'pac')) { c.x = p.x; c.y = p.y; }
     this.pacs.push(c);
+  }
+
+  private spawnDecoy(p: Pac, dur: number) {
+    for (const o of this.pacs.filter(o => o.kind === 'decoy')) this.removePac(o);
+    const d = this.newPac(p.player, '#8fd13a', 'decoy');
+    d.ownerId = p.id; d.x = centerOf(p.x); d.y = centerOf(p.y); d.dir = p.dir; d.lifeT = dur;
+    this.pacs.push(d);
+    this.emit({ t: 'decoy', x: d.x, y: d.y });
   }
 
   private spawnMinis(p: Pac, dur: number) {
@@ -719,7 +870,7 @@ export class World {
     return undefined;
   }
 
-  private nearestPac(x: number, y: number): Pac | null {
+  nearestPac(x: number, y: number): Pac | null {
     let best: Pac | null = null, bd = Infinity;
     for (const p of this.pacs) {
       if (p.state !== 'alive' || p.kind === 'mini') continue;
@@ -740,13 +891,29 @@ export class World {
     const tx = Math.floor(g.x), ty = Math.floor(g.y);
     const pac = this.nearestPac(g.x, g.y);
     if (!pac) return SCATTER[g.kind];
+    const decoy = this.pacs.find(o => o.kind === 'decoy');
+    if (decoy) return { x: Math.floor(decoy.x), y: Math.floor(decoy.y) };
     const elroy = g.kind === 'blinky' && this.elroy() > 0;
     if (g.kind === 'clyde' && this.mods.clydeFriend) return SCATTER.clyde;
     if (this.isScatter && !elroy && !g.king && !g.splinter) return SCATTER[g.kind];
+    const ambush = this.ambushFor(g, pac);
+    if (ambush) return ambush;
     const blinky = this.ghosts.find(o => o.kind === 'blinky' && o.state === 'active');
     const view = { tx: Math.floor(pac.x), ty: Math.floor(pac.y), dir: pac.dir };
     const kind: GhostKind = g.splinter || g.king ? 'blinky' : g.kind;
     return chaseTarget(kind, view, { x: tx, y: ty }, blinky ? { x: Math.floor(blinky.x), y: Math.floor(blinky.y) } : { x: tx, y: ty });
+  }
+
+  /** Ghost memory: Pinky waits at the learned junction nearest to Pac, Clyde at the second nearest (only when Pac is close to them). */
+  private ambushFor(g: Ghost, pac: Pac): Vec | null {
+    const slot = g.kind === 'pinky' ? 0 : g.kind === 'clyde' ? 1 : -1;
+    if (slot < 0 || !this.learned.length) return null;
+    const w = this.maze.w;
+    const spots = this.learned.map(i => ({ x: i % w, y: (i / w) | 0 }))
+      .map(s => ({ ...s, d: dist2(s.x + 0.5, s.y + 0.5, pac.x, pac.y) }))
+      .sort((a, b) => a.d - b.d);
+    const s = spots[slot];
+    return s && s.d <= 64 ? { x: s.x, y: s.y } : null;
   }
 
   ghostSpeed(g: Ghost): number {
@@ -824,6 +991,7 @@ export class World {
         if (this.voidY < Infinity && g.y > this.voidY - 0.3) { this.voidRespawn(g); return; }
         const fireI = Math.floor(g.y) * m.w + m.wrapX(Math.floor(g.x));
         if (this.fire[fireI] > 0 && !g.king) { this.burn(g); return; }
+        if (g.elite === 'phantom') this.phantomCycle(g);
         if (g.reversePending) {
           g.reversePending = false;
           const b = opposite(g.dir);
@@ -856,8 +1024,18 @@ export class World {
     }
   }
 
+  /** Solid, then a flicker warning, then phasing through walls, then solid again once back on an open tile. Frightened phantoms never start a phase. */
+  private phantomCycle(g: Ghost) {
+    g.phaseT -= TICK;
+    if (g.phaseT > 0 || g.phasing) return; // a phase ends in ghostDecide, at an open tile center
+    if (g.fright) { g.phaseT = 0.5; return; }
+    g.phasing = true; g.phaseT = PHANTOM_PHASE;
+    this.emit({ t: 'phaseIn', x: g.x, y: g.y, c: g.color });
+  }
+
   private ghostDecide(g: Ghost, x: number, y: number, dir: Dir): Dir {
     const m = this.maze, tx = Math.floor(x), ty = Math.floor(y);
+    if (g.phasing && g.phaseT <= 0 && m.terrainAt(tx, ty) === T_OPEN) { g.phasing = false; g.phaseT = PHANTOM_SOLID; }
     if (g.stunT > 0) return NONE;
     if (g.human >= 0) {
       if (g.desired !== NONE && m.canGo(tx, ty, g.desired, 'ghost')) return g.desired;
@@ -865,11 +1043,11 @@ export class World {
       return chooseDir(m, tx, ty, dir, null, 'ghost', this.rng, false);
     }
     const target = g.fright ? null : this.ghostTarget(g);
-    return chooseDir(m, tx, ty, dir, target, 'ghost', g.fright ? this.rng : null, !g.fright && this.cfg.mode === 'run');
+    return chooseDir(m, tx, ty, dir, target, g.phasing ? 'phase' : 'ghost', g.fright ? this.rng : null, !g.fright && this.cfg.mode === 'run');
   }
 
   private sendHome(g: Ghost) {
-    g.fright = false; g.stunT = 0; g.reversePending = false;
+    g.fright = false; g.stunT = 0; g.reversePending = false; g.phasing = false;
     if (this.voidY < Infinity) { this.voidRespawn(g); return; }
     g.state = 'eyes';
     // eyes move on the grid: make sure they sit on a lane
@@ -901,6 +1079,7 @@ export class World {
         if (g.state !== 'active' || p.state !== 'alive') continue;
         if (dist2(p.x, p.y, g.x, g.y) > r * r) continue;
         if (g.stunT > 0) continue;
+        if (p.kind === 'decoy') { if (!g.fright) { this.removePac(p); this.emit({ t: 'pop', x: p.x, y: p.y, c: '#8fd13a' }); } continue; }
         if (this.freezeT > 0) { if (p.kind !== 'mini') this.shatter(g); continue; }
         if (p.kind === 'mini') continue;
         if (g.fright || (giant && !g.king)) { this.eatGhost(g, p); continue; }
@@ -910,7 +1089,7 @@ export class World {
       }
       // train cars
       for (const c of this.cars) {
-        if (!c.alive || p.state !== 'alive' || p.kind === 'mini') continue;
+        if (!c.alive || p.state !== 'alive' || p.kind === 'mini' || p.kind === 'decoy') continue;
         if (dist2(p.x, p.y, c.x, c.y) > r * r) continue;
         if (this.freezeT > 0 || this.powerT > 0 || giant) {
           c.alive = false; this.combo++;
@@ -938,6 +1117,12 @@ export class World {
         this.addScore(p, FRUITS[f.id].points); this.addCoins(3);
         this.emit({ t: 'fruitPts', x: f.x, y: f.y, v: FRUITS[f.id].points, c: FRUITS[f.id].color });
         this.applyFruit(p, f.id);
+        if (this.mods.fruitPower > 0) {
+          const before = this.powerT;
+          this.power(p);
+          this.powerT = Math.max(before, this.mods.fruitPower);
+          for (const o of this.mainPacs) o.powerT = this.powerT;
+        }
       }
     }
     // royale PvP
@@ -964,7 +1149,7 @@ export class World {
   }
 
   private eatGhost(g: Ghost, p: Pac) {
-    if (g.elite === 'shielded' && g.shield > 0) {
+    if (g.shield > 0) {
       g.shield = 0; g.fright = false; g.reversePending = true;
       this.addScore(p, 100);
       this.emit({ t: 'shieldBreak', x: g.x, y: g.y, c: g.color });
@@ -974,6 +1159,7 @@ export class World {
     this.combo++;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.ghostsEaten++;
+    if (this.mods.ghostTimeBonus > 0 && this.powerT > 0) { this.powerT += this.mods.ghostTimeBonus; for (const o of this.mainPacs) o.powerT = this.powerT; }
     const pts = Math.round(Math.min(200 * 2 ** Math.min(this.combo - 1, 6), 12800) * this.mods.ghostPoints * (this.mods.clydeFriend ? 0.75 : 1));
     this.addScore(p, pts);
     this.addCoins(Math.min(this.combo, 4) + this.mods.comboCoins);
@@ -1000,6 +1186,15 @@ export class World {
     if (mode === 'run' && this.shieldsLeft > 0) {
       this.shieldsLeft--; p.invulnT = 2;
       this.emit({ t: 'shield', x: p.x, y: p.y });
+      return;
+    }
+    if (mode === 'run' && this.rewindsLeft > 0 && p === this.mainPacs[0] && this.trail.length) {
+      this.rewindsLeft--;
+      const i = Math.max(0, this.trail.length - 1 - 180);
+      const pt = this.trail[i];
+      this.emit({ t: 'rewind', x: p.x, y: p.y, x2: centerOf(pt.x), y2: centerOf(pt.y) });
+      p.x = centerOf(pt.x); p.y = centerOf(pt.y); p.desired = NONE; p.invulnT = 2; p.iceSlide = 0;
+      this.trail.length = i + 1;
       return;
     }
     if (mode === 'squad' && byHuman >= 0) this.ghostScores[byHuman] = (this.ghostScores[byHuman] ?? 0) + 1000;
@@ -1097,57 +1292,6 @@ export class World {
 
   // ───────────────────────────── bosses ─────────────────────────────
 
-  private updateMega() {
-    const b = this.mega;
-    if (!b || b.hp <= 0) return;
-    if (b.invulnT > 0) b.invulnT -= TICK;
-    const pac = this.nearestPac(b.x, b.y);
-    const frozen = this.freezeT > 0;
-    if (pac && !frozen) {
-      const dx = pac.x - b.x, dy = pac.y - b.y, d = Math.hypot(dx, dy) || 1;
-      const flee = this.powerT > 0 ? -0.75 : 1;
-      const speed = (1.9 + (b.maxHp - b.hp) * 0.45) * flee;
-      b.vx += ((dx / d) * speed - b.vx) * 0.035;
-      b.vy += ((dy / d) * speed - b.vy) * 0.035;
-    } else { b.vx *= 0.9; b.vy *= 0.9; }
-    b.x += b.vx * TICK; b.y += b.vy * TICK;
-    b.x = Math.max(b.r * 0.6, Math.min(this.maze.w - b.r * 0.6, b.x));
-    b.y = Math.max(b.r * 0.6, Math.min(this.maze.h - b.r * 0.6, b.y));
-    b.spawnT -= TICK;
-    if (b.spawnT <= 0 && !frozen) {
-      b.spawnT = 8 - (b.maxHp - b.hp);
-      // spit a splinter onto the nearest lane
-      let best: Vec | null = null, bd = Infinity;
-      for (const t of this.maze.openTiles()) {
-        const d = dist2(t.x + 0.5, t.y + 0.5, b.x, b.y);
-        if (d < bd && !(t.y >= 12 && t.y <= 16 && t.x >= 10 && t.x <= 17)) { bd = d; best = t; }
-      }
-      if (best && this.ghosts.filter(g => g.splinter).length < 3) {
-        const s = this.newGhost('blinky', best.x + 0.5, best.y + 0.5);
-        s.splinter = true; s.lifeT = 10; s.state = 'active'; s.color = '#ff5c7a';
-        s.fright = this.powerT > 0;
-        this.ghosts.push(s);
-        this.emit({ t: 'splinter', x: s.x, y: s.y, c: s.color });
-      }
-    }
-    for (const p of this.mainPacs) {
-      if (p.state !== 'alive') continue;
-      const reach = b.r + (p.fx.melon ? 1.2 : 0.4);
-      if (dist2(p.x, p.y, b.x, b.y) > reach * reach) continue;
-      if ((this.powerT > 0 || p.fx.melon || frozen) && b.invulnT <= 0) {
-        b.hp--; b.invulnT = 1.4; b.r = Math.max(0.9, b.r - 0.28);
-        const dx = b.x - p.x, dy = b.y - p.y, d = Math.hypot(dx, dy) || 1;
-        b.vx = (dx / d) * 9; b.vy = (dy / d) * 9;
-        this.addScore(p, 2500);
-        this.hitStop = 0.3;
-        this.emit({ t: 'bossHit', x: b.x, y: b.y, v: 2500, s: `${b.hp}` });
-        if (b.hp <= 0) this.bossDown(b.x, b.y);
-      } else if (this.powerT <= 0 && !frozen && p.invulnT <= 0 && p.dashT <= 0) {
-        this.hurtPac(p, -1);
-      }
-    }
-  }
-
   private updateEater() {
     if (this.voidY === Infinity || this.bossDefeated) return;
     this.voidY -= this.voidSpeed * TICK;
@@ -1206,17 +1350,19 @@ export class World {
 
   /** Set the boss's remaining health (hits, cars or cores). False when there's no boss. */
   cheatBossHp(n: number): boolean {
-    if (this.mega) { this.mega.hp = Math.max(1, Math.min(this.mega.maxHp, n)); return true; }
-    if (this.cfg.boss === 'train') {
+    if (this.megas.length) { for (const b of this.megas) b.hp = Math.max(1, Math.min(b.maxHp, n)); return true; }
+    if (this.cfg.boss === 'train' || this.cfg.boss === 'train2') {
       let keep = Math.max(0, n);
       for (const c of this.cars) if (c.alive) { if (keep > 0) keep--; else c.alive = false; }
       return true;
     }
     if (this.cfg.boss === 'eater') { this.coresLeft = Math.max(1, Math.min(3, n)); return true; }
+    if (this.nullBoss) { this.nullBoss.hp = Math.max(1, Math.min(this.nullBoss.maxHp, n)); return true; }
+    if (this.evil) { this.evil.hp = Math.max(1, Math.min(this.evil.maxHp, n)); this.evil.phase = this.evil.maxHp - this.evil.hp; return true; }
     return false;
   }
 
-  private bossDown(x: number, y: number) {
+  bossDown(x: number, y: number) {
     this.bossDefeated = true;
     this.addScore(null, 10000);
     this.addCoins(25);

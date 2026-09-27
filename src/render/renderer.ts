@@ -1,11 +1,13 @@
 import { I_COIN, I_CORE, I_PELLET, I_POWER, T_DOOR, type Maze } from '../sim/maze';
-import type { World } from '../sim/world';
+import { DEREZ_WARN, PHANTOM_WARN, type World } from '../sim/world';
 import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
 import type { Pip } from '../game/run';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
-import { FONT, T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
+import { FONT, T, drawFruit, drawGhost, drawPac, drawShadowPac, panel, star, text, type Ctx } from './draw';
+import { trailPoint } from '../sim/bosses/evil';
+import { megaHealth } from '../sim/bosses/mega';
 
 export const VW = 28 * T;           // 672
 export const HUD_TOP = 3 * T;       // 72
@@ -203,6 +205,20 @@ export class Renderer {
       case 'trainBreak': this.popup(14, 11, 'TRAIN DERAILED!', '#ff8cf0', 11); break;
       case 'refill': this.popup(14, 17.5, 'REFILL!', '#fff', 14); break;
       case 'powerBack': this.ring(x, y, '#fff', 1.5, 0.5); break;
+      case 'evilGone': this.burst(x, y, '#b45cff', 24, 7, 'square', 0.5, 3); this.ring(x, y, '#ff2d55', 2, 0.4); break;
+      case 'evilBack': this.burst(x, y, '#b45cff', 18, 6, 'square', 0.4, 3); this.popup(x, y - 1, 'GLITCH!', '#b45cff', 10, 0.8); this.addShake(3); break;
+      case 'evilFlee': this.popup(x, y - 1, 'HE RUNS!', '#5ce1ff', 11, 1); break;
+      case 'phaseHop': this.burst(x, y, '#b6ff3d', 14, 6, 'spark', 0.35); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#b6ff3d', 2, 0.4); this.burst(e.x2, e.y2!, '#b6ff3d', 14, 6, 'spark', 0.35); } break;
+      case 'phaseIn': this.burst(x, y, e.c ?? '#fff', 8, 3, 'dot', 0.4, 2); break;
+      case 'megaSplit': this.burst(x, y, '#ff2d55', 50, 12, 'square', 0.8, 4); this.popup(x, y - 2, 'HE SPLIT!', '#ff5c7a', 18, 1.6); this.addShake(12); this.flash = 0.3; this.flashColor = '#ff2d55'; break;
+      case 'nullKey': this.ring(x, y, '#e0b0ff', 6, 0.6); this.burst(x, y, '#e0b0ff', 24, 8, 'star', 0.8, 3); this.popup(x, y - 1, 'KEY! ' + e.v, '#e0b0ff', 11); if (e.s && e.s !== '0') this.popup(14, 11, e.s === '1' ? 'LAST KEY!' : `${e.s} KEYS LEFT`, '#ffe600', 16, 1.4); break;
+      case 'nullExposed': this.ring(x, y, '#ff2d55', 12, 0.8); this.popup(14, 11, 'THE NULL IS EXPOSED!', '#ff2d55', 16, 1.8); this.addShake(8); this.flash = 0.3; this.flashColor = '#ff2d55'; break;
+      case 'nullShield': this.popup(x, y - 2, 'SHIELD UP', '#e0e0ff', 12, 1.2); break;
+      case 'rewrite': this.popup(14, 15, 'REWRITE!', '#e0e0ff', 20, 1.6); this.flash = 0.6; this.flashColor = '#e0e0ff'; this.addShake(14); break;
+      case 'derez': this.flash = 0.06; this.flashColor = '#7d8cff'; break;
+      case 'learned': this.ring(x, y, '#ff2d55', 3, 0.7); this.popup(x, y - 1, 'THEY KNOW THIS SPOT', '#ff2d55', 9, 1.6); break;
+      case 'decoy': this.ring(x, y, '#8fd13a', 3, 0.6); this.popup(x, y - 1, 'DECOY!', '#8fd13a', 11, 1); break;
+      case 'rewind': this.burst(x, y, '#5ce1ff', 20, 7, 'spark', 0.4); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#5ce1ff', 4, 0.6); this.popup(e.x2, e.y2! - 1, 'REWIND!', '#5ce1ff', 13, 1.3); } this.flash = 0.25; this.flashColor = '#5ce1ff'; this.addShake(5); break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -353,6 +369,16 @@ export class Renderer {
       }
       c.restore();
     }
+    // ghost memory: red crosshairs on junctions the ghosts have learned
+    for (const i of w.learned) {
+      const x = (i % w.maze.w) * T + T / 2, y = ((i / w.maze.w) | 0) * T + T / 2;
+      const k = 0.5 + 0.5 * Math.sin(this.time * 4 + i);
+      c.save(); c.strokeStyle = '#ff2d55'; c.shadowColor = '#ff2d55'; c.shadowBlur = 8; c.lineWidth = 1.5; c.globalAlpha = 0.45 + 0.35 * k;
+      c.beginPath(); c.arc(x, y, T * 0.42, 0, Math.PI * 2);
+      c.moveTo(x - T * 0.6, y); c.lineTo(x - T * 0.2, y); c.moveTo(x + T * 0.2, y); c.lineTo(x + T * 0.6, y);
+      c.moveTo(x, y - T * 0.6); c.lineTo(x, y - T * 0.2); c.moveTo(x, y + T * 0.2); c.lineTo(x, y + T * 0.6); c.stroke();
+      c.restore();
+    }
     // teleporters
     for (const tp of w.teleporters) {
       for (const p of [tp.a, tp.b]) {
@@ -366,6 +392,23 @@ export class Renderer {
         }
         c.restore();
       }
+    }
+    // de-rez: dissolved walls are cut out of the wall layer; they flicker before reforming
+    for (const d of w.derez) for (const tile of d.tiles) {
+      const x = tile.x * T, y = tile.y * T;
+      c.save();
+      if (d.open) {
+        const warn = w.derezT < DEREZ_WARN && Math.floor(this.time * 10) % 2 === 0;
+        c.fillStyle = warn ? 'rgba(125,140,255,0.45)' : '#090220';
+        c.fillRect(x - 1, y - 1, T + 2, T + 2);
+        c.fillStyle = 'rgba(125,140,255,0.55)';
+        for (let k = 0; k < 4; k++) c.fillRect(x + ((k * 7 + Math.floor(this.time * 20)) % T), y + ((k * 11 + Math.floor(this.time * 13)) % T), 3, 2);
+      } else if (w.derezT < DEREZ_WARN) {
+        // about to dissolve: a scan of dashes over the wall
+        c.strokeStyle = '#7d8cff'; c.globalAlpha = 0.5 + 0.5 * Math.sin(this.time * 30); c.setLineDash([2, 3]); c.lineWidth = 1.5;
+        c.strokeRect(x + 3, y + 3, T - 6, T - 6);
+      }
+      c.restore();
     }
     // gates
     for (const g of w.gates) {
@@ -466,7 +509,14 @@ export class Renderer {
       const eyesOnly = g.state === 'eyes' || g.state === 'entering';
       const frozen = w.freezeT > 0 && g.state === 'active';
       const fright = g.fright && !eyesOnly;
-      const alpha = g.eatenFlash > 0 ? 0.4 + 0.6 * (Math.floor(g.eatenFlash * 10) % 2) : 1;
+      let alpha = g.eatenFlash > 0 ? 0.4 + 0.6 * (Math.floor(g.eatenFlash * 10) % 2) : 1;
+      if (g.elite === 'phantom' && g.state === 'active') {
+        // translucent while phasing, flickers just before a phase
+        if (g.phasing) alpha *= 0.3 + 0.15 * Math.sin(t * 20);
+        else if (g.phaseT < PHANTOM_WARN) alpha *= Math.floor(t * 14) % 2 ? 0.3 : 1;
+        c.save(); c.globalAlpha = 0.35 * alpha; c.strokeStyle = g.color; c.lineWidth = 1.5; c.setLineDash([2, 4]);
+        c.beginPath(); c.arc(g.x * T, g.y * T, r + 5, t * 2, t * 2 + Math.PI * 2); c.stroke(); c.restore();
+      }
       if (g.elite === 'speedy' && g.state === 'active' && !frozen) {
         c.save(); c.globalAlpha = 0.25;
         const dx = g.dir === LEFT ? 1 : g.dir === RIGHT ? -1 : 0, dy = g.dir === UP ? 1 : g.dir === DOWN ? -1 : 0;
@@ -479,12 +529,12 @@ export class Renderer {
       if (g.human >= 0) text(c, `P${g.human + 1}`, g.x * T, g.y * T - T * 0.95, 8, g.color, 'center', 4);
     }
     // mega boss
-    const b = w.mega;
-    if (b && b.hp > 0) {
+    for (const b of w.megas) {
+      if (b.hp <= 0) continue;
       const vuln = w.powerT > 0 || w.freezeT > 0;
       const blink = b.invulnT > 0 && Math.floor(b.invulnT * 12) % 2 === 0;
       if (!blink) {
-        drawGhost(c, b.x * T, b.y * T, b.r * T, '#ff2d55', b.vx < 0 ? LEFT : RIGHT,
+        drawGhost(c, b.x * T, b.y * T, b.r * T, b.half ? '#ff3b3b' : '#ff2d55', b.vx < 0 ? LEFT : RIGHT,
           { t, fright: vuln && w.powerT > 0, flash: vuln && flashing, frozen: w.freezeT > 0, king: true });
       }
       for (let i = 0; i < b.maxHp; i++) {
@@ -492,6 +542,8 @@ export class Renderer {
         c.beginPath(); c.arc(b.x * T + (i - (b.maxHp - 1) / 2) * 12, b.y * T - b.r * T - 26, 4, 0, Math.PI * 2); c.fill(); c.restore();
       }
     }
+    if (w.evil && w.evil.hp > 0) this.drawEvil(w, flashing);
+    if (w.nullBoss && w.nullBoss.hp > 0 && !w.bossDefeated) this.drawNull(w);
     // pacs
     for (const p of w.pacs) this.drawPacActor(w, p);
     // dying pac
@@ -503,12 +555,89 @@ export class Renderer {
     }
   }
 
+  /** The Null: a spinning glitch cube with one orbiting shard per key still in the maze. Exposed = cracked open. */
+  private drawNull(w: World) {
+    const c = this.ctx, b = w.nullBoss!, t = this.time;
+    const x = b.x * T, y = b.y * T, s = T * 1.2;
+    const exposed = b.exposedT > 0;
+    const blink = exposed && b.exposedT < 2 && Math.floor(t * 10) % 2 === 0;
+    c.save();
+    c.translate(x + (Math.random() < 0.1 ? (Math.random() - 0.5) * 8 : 0), y);
+    c.rotate(b.spin);
+    c.shadowColor = exposed ? '#ff2d55' : '#e0e0ff'; c.shadowBlur = 24;
+    c.fillStyle = exposed ? (blink ? '#fff' : '#2a0010') : '#12101f';
+    c.strokeStyle = exposed ? '#ff2d55' : '#e0e0ff'; c.lineWidth = 3;
+    c.fillRect(-s, -s, s * 2, s * 2); c.strokeRect(-s, -s, s * 2, s * 2);
+    if (exposed) {
+      c.strokeStyle = '#fff'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(-s, -s * 0.3); c.lineTo(-s * 0.2, s * 0.1); c.lineTo(s * 0.3, -s * 0.5); c.lineTo(s, s * 0.2); c.stroke();
+      c.fillStyle = '#ff2d55'; c.beginPath(); c.arc(0, 0, s * 0.35, 0, Math.PI * 2); c.fill();
+    } else {
+      c.fillStyle = '#e0e0ff';
+      for (let k = 0; k < 5; k++) c.fillRect(-s + ((k * 13 + Math.floor(t * 15)) % (s * 2)), -s + ((k * 29) % (s * 2)), 6, 3);
+    }
+    c.restore();
+    // shards still out there orbit the shield
+    for (let k = 0; k < b.keysLeft; k++) {
+      const a = t * 2 + (k / Math.max(1, b.keysLeft)) * Math.PI * 2;
+      c.save(); c.translate(x + Math.cos(a) * s * 1.8, y + Math.sin(a) * s * 1.8); c.rotate(t * 3);
+      c.fillStyle = '#f0d0ff'; c.shadowColor = '#b45cff'; c.shadowBlur = 12;
+      c.beginPath(); c.moveTo(0, -6); c.lineTo(5, 0); c.lineTo(0, 6); c.lineTo(-5, 0); c.closePath(); c.fill();
+      c.restore();
+    }
+    if (exposed) text(c, `${Math.ceil(b.exposedT)}`, x, y - s - 14, 10, '#ff2d55', 'center', 8);
+  }
+
+  /** Evil Pac, the path he's about to walk, and a warning where he'll glitch back in. */
+  private drawEvil(w: World, flashing: boolean) {
+    const c = this.ctx, b = w.evil!, t = this.time;
+    if (b.mode === 'follow' && w.powerT <= 0) {
+      const start = Math.max(0, w.trail.length - 1 - Math.round(b.delay * 60));
+      c.save(); c.fillStyle = '#b45cff';
+      for (let i = start + 6; i < w.trail.length; i += 6) {
+        const q = w.trail[i];
+        c.globalAlpha = 0.12 + 0.25 * ((i - start) / (w.trail.length - start));
+        c.fillRect(q.x * T - 2, q.y * T - 2, 4, 4);
+      }
+      c.restore();
+    }
+    const mouth = 0.04 + 0.26 * Math.abs(Math.sin(b.mouth));
+    if (b.mode === 'gone') {
+      const pt = trailPoint(w, b.delay);
+      if (!pt || !Number.isFinite(b.goneT)) return;
+      const k = Math.max(0, b.goneT);
+      c.save(); c.strokeStyle = '#ff2d55'; c.shadowColor = '#ff2d55'; c.shadowBlur = 10; c.lineWidth = 2;
+      c.globalAlpha = 0.4 + 0.4 * Math.abs(Math.sin(t * 12));
+      c.beginPath(); c.arc(pt.x * T, pt.y * T, T * (0.5 + k * 0.6), 0, Math.PI * 2); c.stroke(); c.restore();
+      return;
+    }
+    const r = T * 0.5;
+    if (b.mode === 'flee') {
+      const rim = flashing ? '#fff' : '#5ce1ff';
+      drawShadowPac(c, b.x * T, b.y * T, r, b.dir, mouth, rim, '#0d1a6e', '#fff');
+    } else {
+      // jitter sells the glitch
+      const jx = Math.random() < 0.08 ? (Math.random() - 0.5) * 6 : 0;
+      drawShadowPac(c, b.x * T + jx, b.y * T, r, b.dir, mouth);
+    }
+    for (let i = 0; i < b.maxHp; i++) {
+      c.save(); c.fillStyle = i < b.hp ? '#b45cff' : 'rgba(180,92,255,0.2)'; c.shadowColor = '#b45cff'; c.shadowBlur = i < b.hp ? 8 : 0;
+      c.beginPath(); c.arc(b.x * T + (i - (b.maxHp - 1) / 2) * 10, b.y * T - r - 10, 3, 0, Math.PI * 2); c.fill(); c.restore();
+    }
+  }
+
   private drawPacActor(w: World, p: Pac) {
     const c = this.ctx, t = this.time;
     if (p.state === 'out' || p.state === 'respawn') return;
     if (w.phase === 'dying' && w.dyingPac === p) return;
     const giant = !!p.fx.melon;
     const r = T * (p.kind === 'mini' ? 0.26 : giant ? 1.35 : 0.48);
+    if (p.kind === 'decoy') {
+      const x = p.x * T, y = p.y * T, blink = p.lifeT < 1.5 && Math.floor(t * 8) % 2 === 0;
+      if (!blink) drawPac(c, x, y, r, p.dir === NONE ? LEFT : p.dir, 0.15 + 0.1 * Math.sin(t * 6), '#8fd13a', 14, 0.75);
+      c.save(); c.strokeStyle = '#8fd13a'; c.globalAlpha = 0.6; c.setLineDash([3, 3]); c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, r + 5, 0, Math.PI * 2); c.stroke(); c.restore();
+      return;
+    }
     const x = p.x * T, y = p.y * T;
     // trails
     const fast = p.fx.cherry || p.dashT > 0 || giant;
@@ -549,6 +678,9 @@ export class Renderer {
     if (p.fx.apple) {
       c.save(); c.strokeStyle = 'rgba(255,64,64,0.25)'; c.lineWidth = 1; c.setLineDash([2, 6]);
       c.beginPath(); c.arc(x, y, 4 * T, t, t + Math.PI * 2); c.stroke(); c.restore();
+    }
+    for (let i = 0; i < p.phaseCharges; i++) {
+      c.save(); c.fillStyle = '#b6ff3d'; c.shadowColor = '#b6ff3d'; c.shadowBlur = 6; c.beginPath(); c.arc(x - 4 + i * 8, y - r - 7, 2.5, 0, Math.PI * 2); c.fill(); c.restore();
     }
     if (p.dashCharges > 0) {
       for (let i = 0; i < p.dashCharges; i++) {
@@ -753,11 +885,13 @@ export class Renderer {
     const boss = hud.boss;
     if (!boss) return;
     let label = boss.name, segs = 0, left = 0;
-    if (w.cfg.boss === 'mega' && w.mega) { segs = w.mega.maxHp; left = Math.max(0, w.mega.hp); }
-    else if (w.cfg.boss === 'train') {
+    if (w.megas.length) { const h = megaHealth(w); segs = h.total; left = h.left; }
+    else if (w.cfg.boss === 'train' || w.cfg.boss === 'train2') {
       segs = 12; left = w.cars.filter(c => c.alive).length;
       if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
     } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }
+    else if (w.evil) { segs = w.evil.maxHp; left = Math.max(0, w.evil.hp); }
+    else if (w.nullBoss) { segs = w.nullBoss.maxHp; left = Math.max(0, w.nullBoss.hp); if (w.nullBoss.exposedT > 0 && !w.bossDefeated) label = 'EXPOSED!'; }
     if (!segs) return;
     const c = this.ctx;
     const bw = VW * 0.5, x0 = (VW - bw) / 2, y = 2.5 * T, gap = 3;
