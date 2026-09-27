@@ -7,7 +7,7 @@ import { Run, ACTS, ACT_COLORS, BOSS_INFO, STAGES_PER_ACT, actPips } from './gam
 import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
-import { META_ITEMS, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { META_ITEMS, defaultMeta, loadMeta, perkLevel, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
 import { MODIFIERS } from './sim/modifiers';
@@ -715,7 +715,7 @@ class Game {
         case 4: s.sfx = Math.max(0, Math.min(1, Math.round((s.sfx + delta * 0.1) * 10) / 10)); break;
         case 5:
           if (this.input.confirm()) {
-            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...loadMetaDefault(), settings: keep }; this.cursor2 = 0; this.say('PROGRESS RESET'); }
+            if (this.cursor2) { const keep = this.meta.settings; this.meta = { ...defaultMeta(), settings: keep }; this.cursor2 = 0; this.say('PROGRESS RESET'); }
             else this.cursor2 = 1;
           }
           break;
@@ -776,10 +776,6 @@ class Game {
     if (this.input.back() || (this.input.confirm() && this.cursor === pages - 1)) { this.audio.ui('back'); this.go('title'); }
     else if (this.input.confirm()) this.cursor++;
   }
-}
-
-function loadMetaDefault(): MetaSave {
-  return { v: 1, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0, unlockedFruits: [], perks: {}, skin: '#ffe600', settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true } };
 }
 
 void T;

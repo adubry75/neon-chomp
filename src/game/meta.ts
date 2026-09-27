@@ -1,12 +1,21 @@
 import type { FruitId } from '../data/fruits';
+import { MAX_TIER, TIERS } from '../data/tiers';
 
 export interface MetaSave {
-  v: 1;
+  v: 2;
   souls: number;
   best: number;
   runs: number;
   wins: number;
   bossesBeaten: number;
+  /** Highest reincarnation tier the player may start a run on (0..MAX_TIER). */
+  tierUnlocked: number;
+  /** Wins per tier, index = tier. */
+  tierWins: number[];
+  /** Highest heat cleared (Heat arrives in a later step). */
+  heatBest: number;
+  /** One-time cutscenes already shown, e.g. 'sting'. */
+  seenCutscenes: string[];
   unlockedFruits: FruitId[];
   perks: Record<string, number>;
   skin: string;
@@ -16,19 +25,40 @@ export interface MetaSave {
 const KEY = 'neon-chomp-save-v1';
 
 export const defaultMeta = (): MetaSave => ({
-  v: 1, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0,
+  v: 2, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0,
+  tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [],
   unlockedFruits: [], perks: {}, skin: '#ffe600',
   settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true },
 });
 
+/** Bring any saved shape (v1 or v2) up to the current MetaSave. */
+export function migrateMeta(raw: Partial<Omit<MetaSave, 'v'>> & { v?: number }): MetaSave {
+  const d = defaultMeta();
+  const m: MetaSave = {
+    ...d, ...raw, v: 2,
+    settings: { ...d.settings, ...raw.settings },
+    perks: { ...raw.perks },
+    tierWins: d.tierWins.map((_, i) => raw.tierWins?.[i] ?? 0),
+    seenCutscenes: [...(raw.seenCutscenes ?? [])],
+  };
+  // v1 → v2: a player who has already won starts with Reincarnation 1 open.
+  if ((raw.v ?? 1) < 2) m.tierUnlocked = (raw.wins ?? 0) > 0 ? 1 : 0;
+  return m;
+}
+
 export function loadMeta(): MetaSave {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return defaultMeta();
-    const m = JSON.parse(raw) as MetaSave;
-    const d = defaultMeta();
-    return { ...d, ...m, settings: { ...d.settings, ...m.settings }, perks: { ...m.perks } };
+    return raw ? migrateMeta(JSON.parse(raw)) : defaultMeta();
   } catch { return defaultMeta(); }
+}
+
+/** Record a (non-cheated) win at `tier`. Returns the newly unlocked tier, or null. */
+export function recordWin(m: MetaSave, tier: number): number | null {
+  m.wins++;
+  m.tierWins[tier]++;
+  if (tier === m.tierUnlocked && tier < MAX_TIER) return ++m.tierUnlocked;
+  return null;
 }
 
 export function saveMeta(m: MetaSave) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Run, actPips } from '../src/game/run';
-import { defaultMeta } from '../src/game/meta';
+import { defaultMeta, migrateMeta, recordWin } from '../src/game/meta';
 import { runCheat, type CheatCtx } from '../src/game/cheats';
 import { MAX_TIER, TIERS, tierLabel, tierSouls } from '../src/data/tiers';
 
@@ -97,5 +97,49 @@ describe('tiers', () => {
     expect(tierSouls(100, 1)).toBe(120);
     expect(tierSouls(100, 2)).toBe(144);
     expect(tierSouls(7, 1)).toBe(8); // 8.4 → 8
+  });
+});
+
+describe('save v2', () => {
+  const v1 = (wins: number) => ({
+    v: 1, souls: 50, best: 9000, runs: 8, wins, bossesBeaten: 4,
+    unlockedFruits: ['banana'], perks: { start_lives: 1 }, skin: '#5cffc8',
+    settings: { bloom: 1, crt: true, music: 0.3, sfx: 0.5, shake: false },
+  });
+  it('migrates a v1 save with a win to R1 unlocked, keeping everything else', () => {
+    const m = migrateMeta(v1(1) as never);
+    expect(m.v).toBe(2);
+    expect(m.tierUnlocked).toBe(1);
+    expect(m.tierWins).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(m.heatBest).toBe(0);
+    expect(m.seenCutscenes).toEqual([]); // they still get the sting on their next win
+    expect(m.souls).toBe(50);
+    expect(m.perks).toEqual({ start_lives: 1 });
+    expect(m.settings.crt).toBe(true);
+  });
+  it('migrates a v1 save without wins to R0', () => {
+    expect(migrateMeta(v1(0) as never).tierUnlocked).toBe(0);
+  });
+  it('keeps v2 fields as they are', () => {
+    const m = { ...defaultMeta(), tierUnlocked: 3, tierWins: [1, 1, 1, 0, 0, 0], seenCutscenes: ['sting'] };
+    const out = migrateMeta(JSON.parse(JSON.stringify(m)));
+    expect(out.tierUnlocked).toBe(3);
+    expect(out.tierWins).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(out.seenCutscenes).toEqual(['sting']);
+  });
+  it('unlocks the next tier only on a win at the highest unlocked tier', () => {
+    const m = defaultMeta();
+    expect(recordWin(m, 0)).toBe(1);
+    expect(m.tierUnlocked).toBe(1);
+    expect(recordWin(m, 0)).toBe(null); // replaying R0 unlocks nothing
+    expect(m.tierUnlocked).toBe(1);
+    expect(m.tierWins[0]).toBe(2);
+    expect(m.wins).toBe(2);
+  });
+  it('caps at R5', () => {
+    const m = { ...defaultMeta(), tierUnlocked: 5 };
+    expect(recordWin(m, 5)).toBe(null);
+    expect(m.tierUnlocked).toBe(5);
+    expect(m.tierWins[5]).toBe(1);
   });
 });
