@@ -8,6 +8,7 @@ import { World, type StageConfig } from '../src/sim/world';
 import { defaultMods } from '../src/sim/mods';
 import { Rng } from '../src/sim/rng';
 import { FRUIT_IDS } from '../src/data/fruits';
+import { EVIL_PHASES, trailPoint } from '../src/sim/bosses/evil';
 
 describe('classic maze', () => {
   it('parses with arcade pellet count', () => {
@@ -121,7 +122,7 @@ describe('world', () => {
   it('runs every modifier and boss without throwing', () => {
     const mods = ['blackout', 'ice', 'conveyor', 'teleport', 'gates', 'mirror', 'ghostTrain'] as const;
     for (const mod of mods) simulate(3, 3000, { ...cfg(3), maze: generateMaze(99), modifiers: [mod] });
-    for (const boss of ['mega', 'train', 'eater'] as const) simulate(5, 4000, { ...cfg(5), boss });
+    for (const boss of ['mega', 'train', 'eater', 'evil'] as const) simulate(5, 4000, { ...cfg(5), boss });
     simulate(9, 4000, { ...cfg(9), mode: 'royale', players: [0, 1, 2, 3].map(s => ({ slot: s, color: '#fff' })) });
     simulate(9, 4000, { ...cfg(9), mode: 'squad', squadPac: 0, ghostPlayers: [1, 2], players: [0, 1, 2].map(s => ({ slot: s, color: '#fff' })) });
   });
@@ -214,5 +215,80 @@ describe('ice', () => {
     hold(w, LEFT, 3);
     hold(w, RIGHT, 1);
     expect(w.pacs[0].dir).toBe(RIGHT);
+  });
+});
+
+describe('evil pac', () => {
+  const boot = (seed = 31) => {
+    const w = new World({ ...cfg(seed), maze: generateMaze(777), boss: 'evil', level: 16 });
+    w.phase = 'play';
+    return w;
+  };
+  /** Walk P1 around with a changing held direction. */
+  const walk = (w: World, ticks: number, seed = 5) => {
+    const rng = new Rng(seed);
+    let dir = LEFT as 0 | 1 | 2 | 3;
+    for (let i = 0; i < ticks; i++) {
+      if (i % 25 === 0) dir = rng.int(4) as 0 | 1 | 2 | 3;
+      w.setInput(0, dir, false);
+      w.pacs[0].invulnT = 1; // keep P1 alive so the trail keeps growing
+      w.update();
+    }
+  };
+  it('waits off-trail, then follows P1 exactly `delay` seconds behind', () => {
+    const w = boot();
+    expect(w.evil!.mode).toBe('gone');
+    walk(w, 60);
+    expect(w.evil!.mode).toBe('gone'); // trail is only 1s long
+    walk(w, 240);
+    const b = w.evil!;
+    expect(b.mode).toBe('follow');
+    expect(b.delay).toBeLessThan(EVIL_PHASES[0].delay); // closing in
+    expect(b.delay).toBeGreaterThanOrEqual(EVIL_PHASES[0].min);
+    const pt = trailPoint(w, b.delay)!;
+    expect(b.x).toBe(pt.x); expect(b.y).toBe(pt.y);
+  });
+  it('flees from a powered Pac and loses a phase when caught', () => {
+    const w = boot();
+    walk(w, 300);
+    w.cheatPower(); w.update();
+    const b = w.evil!;
+    expect(b.mode).toBe('flee');
+    const p = w.pacs[0]; p.x = b.x; p.y = b.y;
+    w.update();
+    expect(b.hp).toBe(2);
+    expect(b.phase).toBe(1);
+    expect(b.mode).toBe('gone');
+    expect(w.ghosts.some(g => g.kind === 'blinky')).toBe(true);
+  });
+  it('does not flee again on the same power pellet after a hit', () => {
+    const w = boot();
+    walk(w, 300);
+    w.cheatPower(); w.update();
+    const b = w.evil!;
+    w.pacs[0].x = b.x; w.pacs[0].y = b.y; w.update();
+    w.powerT = 60; // power still running
+    walk(w, 200);
+    expect(b.mode).toBe('follow');
+  });
+  it('goes down after 3 hits', () => {
+    const w = boot();
+    for (let k = 0; k < 3; k++) {
+      w.powerT = 0; w.hitStop = 0;
+      walk(w, 320, k + 1);
+      expect(w.evil!.mode).toBe('follow');
+      w.cheatPower(); w.hitStop = 0; w.update();
+      const b = w.evil!, p = w.pacs[0];
+      p.x = b.x; p.y = b.y; p.state = 'alive'; w.hitStop = 0; w.update();
+    }
+    expect(w.evil!.hp).toBe(0);
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('is deterministic', () => {
+    const run = () => simulate(8, 4000, { ...cfg(8), maze: generateMaze(55), boss: 'evil', level: 16 });
+    const a = run(), b = run();
+    expect(a.score).toBe(b.score);
+    expect(a.evil!.x).toBe(b.evil!.x);
+    expect(a.lives).toBe(b.lives);
   });
 });

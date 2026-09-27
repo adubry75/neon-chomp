@@ -20,6 +20,7 @@ export interface StagePlan {
 export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: string[]; color: string }> = {
   mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', rules: ['EAT A POWER PELLET, THEN CHOMP HIM.', '4 HITS TO WIN. PELLETS RESPAWN.'], color: '#ff2d55' },
   train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', rules: ['POWER UP AND EAT ALL 12 TRAIN CARS,', 'THEN CHOMP THE KING.'], color: '#ffd23d' },
+  evil: { name: 'EVIL PAC', sub: 'He follows your path. Never double back.', rules: ["HE FOLLOWS YOUR PATH. DON'T DOUBLE BACK.", 'POWER UP, THEN CHOMP HIM. 3 HITS.'], color: '#b45cff' },
   eater: { name: 'THE MAZE EATER', sub: 'Outrun the void. Eat 3 cores.', rules: ['OUTRUN THE RISING VOID.', 'EAT 3 CORES TO PUSH IT BACK.'], color: '#b45cff' },
 };
 

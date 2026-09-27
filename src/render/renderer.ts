@@ -5,7 +5,8 @@ import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
 import type { Pip } from '../game/run';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
-import { FONT, T, drawFruit, drawGhost, drawPac, panel, star, text, type Ctx } from './draw';
+import { FONT, T, drawFruit, drawGhost, drawPac, drawShadowPac, panel, star, text, type Ctx } from './draw';
+import { trailPoint } from '../sim/bosses/evil';
 
 export const VW = 28 * T;           // 672
 export const HUD_TOP = 3 * T;       // 72
@@ -203,6 +204,9 @@ export class Renderer {
       case 'trainBreak': this.popup(14, 11, 'TRAIN DERAILED!', '#ff8cf0', 11); break;
       case 'refill': this.popup(14, 17.5, 'REFILL!', '#fff', 14); break;
       case 'powerBack': this.ring(x, y, '#fff', 1.5, 0.5); break;
+      case 'evilGone': this.burst(x, y, '#b45cff', 24, 7, 'square', 0.5, 3); this.ring(x, y, '#ff2d55', 2, 0.4); break;
+      case 'evilBack': this.burst(x, y, '#b45cff', 18, 6, 'square', 0.4, 3); this.popup(x, y - 1, 'GLITCH!', '#b45cff', 10, 0.8); this.addShake(3); break;
+      case 'evilFlee': this.popup(x, y - 1, 'HE RUNS!', '#5ce1ff', 11, 1); break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -492,6 +496,7 @@ export class Renderer {
         c.beginPath(); c.arc(b.x * T + (i - (b.maxHp - 1) / 2) * 12, b.y * T - b.r * T - 26, 4, 0, Math.PI * 2); c.fill(); c.restore();
       }
     }
+    if (w.evil && w.evil.hp > 0) this.drawEvil(w, flashing);
     // pacs
     for (const p of w.pacs) this.drawPacActor(w, p);
     // dying pac
@@ -500,6 +505,44 @@ export class Renderer {
       const k = 1 - Math.max(0, (w.phaseT - 0.3) / 1.6);
       if (k < 1) drawPac(c, p.x * T, p.y * T, T * 0.48, UP, 0.08 + k * 0.92, p.color);
       if (k >= 0.98 && Math.random() < 0.4) this.burst(p.x, p.y, p.color, 6, 6, 'spark', 0.4);
+    }
+  }
+
+  /** Evil Pac, the path he's about to walk, and a warning where he'll glitch back in. */
+  private drawEvil(w: World, flashing: boolean) {
+    const c = this.ctx, b = w.evil!, t = this.time;
+    if (b.mode === 'follow' && w.powerT <= 0) {
+      const start = Math.max(0, w.trail.length - 1 - Math.round(b.delay * 60));
+      c.save(); c.fillStyle = '#b45cff';
+      for (let i = start + 6; i < w.trail.length; i += 6) {
+        const q = w.trail[i];
+        c.globalAlpha = 0.12 + 0.25 * ((i - start) / (w.trail.length - start));
+        c.fillRect(q.x * T - 2, q.y * T - 2, 4, 4);
+      }
+      c.restore();
+    }
+    const mouth = 0.04 + 0.26 * Math.abs(Math.sin(b.mouth));
+    if (b.mode === 'gone') {
+      const pt = trailPoint(w, b.delay);
+      if (!pt || !Number.isFinite(b.goneT)) return;
+      const k = Math.max(0, b.goneT);
+      c.save(); c.strokeStyle = '#ff2d55'; c.shadowColor = '#ff2d55'; c.shadowBlur = 10; c.lineWidth = 2;
+      c.globalAlpha = 0.4 + 0.4 * Math.abs(Math.sin(t * 12));
+      c.beginPath(); c.arc(pt.x * T, pt.y * T, T * (0.5 + k * 0.6), 0, Math.PI * 2); c.stroke(); c.restore();
+      return;
+    }
+    const r = T * 0.5;
+    if (b.mode === 'flee') {
+      const rim = flashing ? '#fff' : '#5ce1ff';
+      drawShadowPac(c, b.x * T, b.y * T, r, b.dir, mouth, rim, '#0d1a6e', '#fff');
+    } else {
+      // jitter sells the glitch
+      const jx = Math.random() < 0.08 ? (Math.random() - 0.5) * 6 : 0;
+      drawShadowPac(c, b.x * T + jx, b.y * T, r, b.dir, mouth);
+    }
+    for (let i = 0; i < b.maxHp; i++) {
+      c.save(); c.fillStyle = i < b.hp ? '#b45cff' : 'rgba(180,92,255,0.2)'; c.shadowColor = '#b45cff'; c.shadowBlur = i < b.hp ? 8 : 0;
+      c.beginPath(); c.arc(b.x * T + (i - (b.maxHp - 1) / 2) * 10, b.y * T - r - 10, 3, 0, Math.PI * 2); c.fill(); c.restore();
     }
   }
 
@@ -758,6 +801,7 @@ export class Renderer {
       segs = 12; left = w.cars.filter(c => c.alive).length;
       if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }
     } else if (w.cfg.boss === 'eater') { segs = 3; left = w.coresLeft; }
+    else if (w.evil) { segs = w.evil.maxHp; left = Math.max(0, w.evil.hp); }
     if (!segs) return;
     const c = this.ctx;
     const bw = VW * 0.5, x0 = (VW - bw) / 2, y = 2.5 * T, gap = 3;

@@ -6,11 +6,12 @@ import { SCATTER, chaseTarget, chooseDir, type GhostKind } from './ghostAI';
 import { levelParams, type LevelParams } from '../data/levels';
 import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
-import type { Dozer, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
+import type { Dozer, EvilBoss, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
+import { resetEvil, setupEvil, updateEvil } from './bosses/evil';
 import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
-export type BossId = 'mega' | 'train' | 'eater';
+export type BossId = 'mega' | 'train' | 'eater' | 'evil';
 
 export interface PlayerInfo { slot: number; color: string }
 export interface PlayerInput { dir: Dir; action: boolean }
@@ -95,6 +96,9 @@ export class World {
   voidSpeed = 0.42;
   coresLeft = 0;
   bossDefeated = false;
+  evil: EvilBoss | null = null;
+  /** P1's position every play tick (newest last), for Evil Pac. */
+  trail: Vec[] = [];
   /** Cheat: main pacs can't be hurt. */
   god = false;
   private idGen = 1;
@@ -153,7 +157,7 @@ export class World {
     }
   }
 
-  private newGhost(kind: GhostKind, hx: number, hy: number): Ghost {
+  newGhost(kind: GhostKind, hx: number, hy: number): Ghost {
     return {
       id: this.idGen++, kind, x: hx, y: hy, dir: LEFT, state: 'house', homeX: hx, homeY: hy, fright: false,
       reversePending: false, stunT: 0, color: GHOST_COLORS[kind], elite: null, shield: 0, human: -1, desired: NONE,
@@ -167,6 +171,7 @@ export class World {
     const kinds: GhostKind[] =
       c.boss === 'mega' ? ['blinky', 'pinky'] :
       c.boss === 'train' ? ['blinky', 'pinky', 'inky'] :
+      c.boss === 'evil' ? [] :
       c.mode === 'royale' ? ['blinky', 'pinky', 'inky'] :
       ['blinky', 'pinky', 'inky', 'clyde'];
     if (c.mode === 'run' && this.mods.hunted && !c.boss) kinds.push('stalker');
@@ -202,6 +207,8 @@ export class World {
       this.voidY = this.maze.h + 1;
       this.coresLeft = 3;
       this.placeCore();
+    } else if (b === 'evil') {
+      this.evil = setupEvil(this);
     }
   }
 
@@ -239,6 +246,8 @@ export class World {
       if (king) for (const c of this.cars) { c.x = king.x; c.y = king.y; }
     } else if (this.cars.length) this.disbandTrain();
     if (this.mega) { this.mega.x = 14; this.mega.y = 4.5; this.mega.vx = this.mega.vy = 0; this.mega.invulnT = 2; }
+    this.trail = [];
+    if (this.evil) resetEvil(this);
   }
 
   private safeSpawn(): Vec {
@@ -300,10 +309,12 @@ export class World {
   private step() {
     this.updateTimers();
     for (const p of [...this.pacs]) this.updatePac(p);
+    this.recordTrail();
     for (const g of [...this.ghosts]) this.updateGhost(g);
     this.updateTrain();
     this.updateMega();
     this.updateEater();
+    updateEvil(this);
     this.collide();
     this.checkEnd();
   }
@@ -370,6 +381,13 @@ export class World {
       this.royaleT -= TICK;
       if (this.royaleT <= 0) this.endGame('over');
     }
+  }
+
+  private recordTrail() {
+    const p = this.mainPacs[0];
+    if (!p || p.state !== 'alive') return;
+    this.trail.push({ x: p.x, y: p.y });
+    if (this.trail.length > 600) this.trail.splice(0, this.trail.length - 600);
   }
 
   private occupied(tx: number, ty: number) {
@@ -719,7 +737,7 @@ export class World {
     return undefined;
   }
 
-  private nearestPac(x: number, y: number): Pac | null {
+  nearestPac(x: number, y: number): Pac | null {
     let best: Pac | null = null, bd = Infinity;
     for (const p of this.pacs) {
       if (p.state !== 'alive' || p.kind === 'mini') continue;
@@ -1213,10 +1231,11 @@ export class World {
       return true;
     }
     if (this.cfg.boss === 'eater') { this.coresLeft = Math.max(1, Math.min(3, n)); return true; }
+    if (this.evil) { this.evil.hp = Math.max(1, Math.min(this.evil.maxHp, n)); this.evil.phase = this.evil.maxHp - this.evil.hp; return true; }
     return false;
   }
 
-  private bossDown(x: number, y: number) {
+  bossDown(x: number, y: number) {
     this.bossDefeated = true;
     this.addScore(null, 10000);
     this.addCoins(25);

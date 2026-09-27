@@ -71,6 +71,22 @@ export interface MegaBoss {
   invulnT: number; spawnT: number; vx: number; vy: number;
 }
 
+/** Final boss: follows P1's recorded path `delay` seconds behind, flees while P1 is powered. */
+export interface EvilBoss {
+  x: number; y: number; dir: Dir;
+  hp: number; maxHp: number;
+  /** 0-based fight phase; each hit advances it. */
+  phase: number;
+  /** Seconds behind P1 on the trail. Shrinks while unpowered. */
+  delay: number;
+  mode: 'follow' | 'flee' | 'gone';
+  /** Seconds until he can glitch back onto the trail. */
+  goneT: number;
+  /** Already hit during the current power pellet: no fleeing until it ends. */
+  spent: boolean;
+  mouth: number;
+}
+
 export interface GameEvent {
   t: string;
   x?: number; y?: number;

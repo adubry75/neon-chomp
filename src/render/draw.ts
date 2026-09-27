@@ -72,6 +72,25 @@ export function drawPac(ctx: Ctx, x: number, y: number, r: number, dir: Dir, mou
   ctx.restore();
 }
 
+/** Evil Pac: a dark Pac with a glowing rim and one red eye. */
+export function drawShadowPac(ctx: Ctx, x: number, y: number, r: number, dir: Dir, mouth: number, rim = '#b45cff', fill = '#1a0830', eye = '#ff2d55', alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  if (dir === LEFT) ctx.scale(-1, 1);
+  else if (dir === UP) ctx.rotate(-Math.PI / 2);
+  else if (dir === DOWN) ctx.rotate(Math.PI / 2);
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.15, 0);
+  ctx.arc(0, 0, r, mouth * Math.PI, -mouth * Math.PI + Math.PI * 2);
+  ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.strokeStyle = rim; ctx.lineWidth = Math.max(1.5, r * 0.1); ctx.shadowColor = rim; ctx.shadowBlur = 12; ctx.stroke();
+  ctx.fillStyle = eye; ctx.shadowColor = eye; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.arc(r * 0.05, -r * 0.5, Math.max(2, r * 0.17), 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 export interface GhostLook {
   fright?: boolean; flash?: boolean; frozen?: boolean; eyesOnly?: boolean; stunned?: boolean;
   elite?: 'speedy' | 'shielded' | 'splitter' | null; shield?: number; king?: boolean; t: number; alpha?: number; sleeping?: boolean;

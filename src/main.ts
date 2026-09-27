@@ -69,6 +69,7 @@ class Game {
     window.addEventListener('keydown', e => this.consoleKey(e));
     const q = new URLSearchParams(location.search);
     if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0, Math.min(5, Math.max(0, Number(q.get('tier')) || 0)));
+    if (q.get('auto') === 'evil') this.startEvilPrototype();
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
     if (q.get('auto') === 'squad') { this.players = [0, 1, 2].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startSquad(); }
     requestAnimationFrame(t => this.frame(t));
@@ -258,6 +259,17 @@ class Game {
     this.meta.runs++; saveMeta(this.meta);
     if (stage === 0) this.playCutscenes(['intro', 'title0'], () => this.startStage());
     else this.startStage();
+  }
+
+  /** Debug: the Evil Pac fight on its own. Marked cheated, so it never touches the save. */
+  startEvilPrototype() {
+    this.mode = 'run';
+    this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
+    this.run = new Run(Math.floor(Math.random() * 2 ** 31) >>> 0, [{ slot: 0, color: this.meta.skin }], this.meta, 5);
+    this.run.cheated = true;
+    this.run.plan = [{ act: 2, index: 4, level: 16, boss: 'evil', modifiers: [], mazeSeed: 4242 }];
+    this.world = null;
+    this.startStage();
   }
 
   /** Start the run's current stage, with the intermission + title card first when a new act begins. */
