@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { classicMaze } from '../src/data/mazes';
 import { chaseTarget, chooseDir, SCATTER } from '../src/sim/ghostAI';
 import { advance, nextCenterAhead, tryCorner } from '../src/sim/movement';
-import { DOWN, LEFT, NONE, RIGHT, UP } from '../src/sim/types';
+import { DOWN, LEFT, NONE, RIGHT, TICK, UP } from '../src/sim/types';
+import { T_OPEN } from '../src/sim/maze';
+import { twistsFor } from '../src/data/tiers';
 import { generateMaze, validateMaze } from '../src/sim/mazegen';
 import { World, type StageConfig } from '../src/sim/world';
 import { defaultMods } from '../src/sim/mods';
@@ -290,5 +292,78 @@ describe('evil pac', () => {
     expect(a.score).toBe(b.score);
     expect(a.evil!.x).toBe(b.evil!.x);
     expect(a.lives).toBe(b.lives);
+  });
+});
+
+describe('phantom elites', () => {
+  it('phase through walls and are always back on an open tile when solid', () => {
+    const w = new World({ ...cfg(12), maze: generateMaze(321), level: 12, twists: { ...twistsFor(1) } });
+    w.phase = 'play';
+    for (const g of w.ghosts) if (g.kind !== 'blinky') { g.elite = 'phantom'; g.phaseT = 0.5; }
+    let sawInWall = false;
+    for (let i = 0; i < 3000; i++) {
+      w.pacs[0].invulnT = 1; w.phase = 'play';
+      w.setInput(0, [UP, LEFT, DOWN, RIGHT][(i / 40 | 0) % 4] as 0, false);
+      w.update();
+      for (const g of w.ghosts) {
+        if (g.state !== 'active' || g.elite !== 'phantom') continue;
+        const open = w.maze.terrainAt(Math.floor(g.x), Math.floor(g.y)) === T_OPEN;
+        if (!open) { sawInWall = true; expect(g.phasing).toBe(true); }
+      }
+    }
+    expect(sawInWall).toBe(true);
+  });
+  it('only appear from R1 on', () => {
+    const count = (tier: number) => {
+      let n = 0;
+      for (let s = 0; s < 60; s++) n += new World({ ...cfg(s), level: 10, twists: twistsFor(tier) }).ghosts.filter(g => g.elite === 'phantom').length;
+      return n;
+    };
+    expect(count(0)).toBe(0);
+    expect(count(1)).toBeGreaterThan(0);
+  });
+});
+
+describe('lime', () => {
+  it('hops Pac through a 1-thick wall when pushing into it from a standstill', () => {
+    const w = new World(cfg(3));
+    w.phase = 'play';
+    const p = w.pacs[0];
+    w.applyFruit(p, 'lime');
+    expect(p.phaseCharges).toBe(2);
+    // classic maze walls are 2 thick: find floor, 2 wall tiles below it, then floor
+    const m = w.maze;
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 1; y < m.h - 4 && !spot; y++) for (let x = 1; x < m.w - 1 && !spot; x++) {
+      if (m.terrainAt(x, y) === T_OPEN && m.terrainAt(x, y + 1) === 1 && m.terrainAt(x, y + 2) === 1 && m.terrainAt(x, y + 3) === T_OPEN) spot = { x, y };
+    }
+    expect(spot).not.toBeNull();
+    p.x = spot!.x + 0.5; p.y = spot!.y + 0.5; p.dir = DOWN; p.moving = false; p.invulnT = 5;
+    w.setInput(0, DOWN, false);
+    w.update();
+    expect(Math.floor(p.y)).toBe(spot!.y + 3);
+    expect(p.phaseCharges).toBe(1);
+  });
+});
+
+describe('R1 upgrades', () => {
+  it('Glow Up grants invulnerability when power ends', () => {
+    const mods = defaultMods(); mods.powerGrace = 1.5;
+    const w = new World({ ...cfg(2), mods });
+    w.phase = 'play'; w.powerT = TICK / 2;
+    w.update();
+    expect(w.pacs[0].invulnT).toBeGreaterThan(1.3);
+  });
+  it('Combo Keeper adds power time per ghost', () => {
+    const mods = defaultMods(); mods.ghostTimeBonus = 0.75;
+    const w = new World({ ...cfg(2), mods });
+    w.phase = 'play';
+    for (let i = 0; i < 200; i++) w.update();
+    const g = w.ghosts.find(g => g.state === 'active')!;
+    w.cheatPower();
+    const before = w.powerT;
+    const p = w.pacs[0]; p.x = g.x; p.y = g.y; p.state = 'alive';
+    w.update();
+    expect(w.powerT).toBeGreaterThan(before);
   });
 });

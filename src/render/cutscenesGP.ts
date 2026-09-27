@@ -1,4 +1,4 @@
-import { LEFT, RIGHT } from '../sim/types';
+import { LEFT, RIGHT, UP } from '../sim/types';
 import { drawPac, drawShadowPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
 
@@ -39,5 +39,47 @@ function glitchBars(c: Ctx, t: number, pacY: number) {
     c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.14;
     c.fillStyle = i % 2 ? '#ff2d55' : '#2de2ff'; c.fillRect(0, yy, VW, h);
     c.restore();
+  }
+}
+
+function street(c: Ctx, y: number) {
+  c.save(); c.strokeStyle = '#2d7bff'; c.globalAlpha = 0.5; c.lineWidth = 2; c.shadowColor = '#2d7bff'; c.shadowBlur = 10;
+  c.beginPath(); c.moveTo(0, y); c.lineTo(VW, y); c.stroke(); c.restore();
+}
+
+/** Neon skyline along the bottom; returns the y of the tallest rooftop (on the right). */
+function skyline(c: Ctx, floorY: number, color = '#2d7bff') {
+  const blocks = [[20, 90], [110, 60], [180, 120], [300, 70], [380, 100], [470, 150], [560, 80]];
+  c.save(); c.strokeStyle = color; c.lineWidth = 2; c.shadowColor = color; c.shadowBlur = 10; c.fillStyle = 'rgba(20,10,50,0.9)';
+  for (const [x, h] of blocks) { c.fillRect(x, floorY - h, 80, h); c.strokeRect(x, floorY - h, 80, h); }
+  c.globalAlpha = 0.5; c.fillStyle = '#ffe9b0';
+  for (const [x, h] of blocks) for (let wy = floorY - h + 14; wy < floorY - 10; wy += 22) for (let wx = x + 12; wx < x + 70; wx += 22) if ((wx + wy) % 3) c.fillRect(wx, wy, 6, 8);
+  c.restore();
+  return floorY - 150;
+}
+
+/** R1 (Act I→II): Pac chomps along; the shadow watches from a rooftop and is gone when Pac looks up. */
+export function gagR1(c: Ctx, t: number) {
+  const floorY = VH / 2 + 110, y = floorY + 22;
+  const roof = skyline(c, floorY, '#ff8a3d');
+  street(c, y + 26);
+  const stopX = 510;
+  const px = t < 4.3 ? Math.min(stopX, -40 + t * 140) : t < 5.8 ? stopX : stopX + (t - 5.8) * 150;
+  // pellets ahead of Pac
+  c.save(); c.fillStyle = '#ffe9c4'; c.shadowColor = '#ffd9a0'; c.shadowBlur = 8;
+  for (let x = 30; x < VW; x += 32) if (x > px + 10) { c.beginPath(); c.arc(x, y, 3, 0, Math.PI * 2); c.fill(); }
+  c.restore();
+  const looking = t > 4.3 && t < 5.8;
+  if (t < 4.5) drawShadowPac(c, 510, roof - 18, 16, LEFT, 0.12);
+  else if (t < 4.9) {
+    c.save(); c.fillStyle = '#b45cff';
+    for (let i = 0; i < 12; i++) { const a = i * 0.52 + t * 9; c.globalAlpha = 1 - (t - 4.5) / 0.4; c.fillRect(510 + Math.cos(a) * (t - 4.5) * 90, roof - 18 + Math.sin(a) * (t - 4.5) * 60, 5, 5); }
+    c.restore();
+  }
+  drawPac(c, px, y, 18, looking ? UP : RIGHT, looking ? 0.1 : 0.04 + 0.26 * Math.abs(Math.sin(t * 14)), '#ffe600');
+  if (t > 4.6 && t < 5.8) text(c, '?', px, y - 42, 18, '#ffe600', 'center', 10);
+  if (t > 1 && t < 4.3) {
+    // the red eye tracks Pac
+    c.save(); c.globalAlpha = 0.5 + 0.5 * Math.sin(t * 5); text(c, '. . .', 510, roof - 52, 8, '#ff2d55', 'center', 6); c.restore();
   }
 }

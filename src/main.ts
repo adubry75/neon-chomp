@@ -8,7 +8,7 @@ import { CUTSCENE_LEN, drawCutscene, type CutsceneId } from './render/cutscenes'
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
 import { META_ITEMS, defaultMeta, loadMeta, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
-import { TIERS, tierLabel, tierSouls } from './data/tiers';
+import { TIERS, actColor, gagFor, tierLabel, tierSouls } from './data/tiers';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
 import { MODIFIERS } from './sim/modifiers';
@@ -275,7 +275,10 @@ class Game {
   /** Start the run's current stage, with the intermission + title card first when a new act begins. */
   nextStage() {
     const p = this.run!.current;
-    if (p.index === 0 && this.run!.stage > 0) this.playCutscenes([`gag${p.act}` as CutsceneId, `title${p.act}` as CutsceneId], () => this.startStage());
+    if (p.index === 0 && this.run!.stage > 0) {
+      const ids = [gagFor(p.act, this.run!.tier), `title${p.act}`].filter((id): id is CutsceneId => !!id && id in CUTSCENE_LEN);
+      this.playCutscenes(ids, () => this.startStage());
+    }
     else this.startStage();
   }
 
@@ -355,7 +358,7 @@ class Game {
       return {
         mode: 'run', best: this.meta.best, coins: this.run.coins,
         stageLabel: `${this.run.tier ? `R${this.run.tier} · ` : ''}ACT ${['I', 'II', 'III'][p.act]}`, pips: actPips(this.run.stage),
-        wallColor: boss ? boss.color : ACT_COLORS[p.act],
+        wallColor: boss ? boss.color : actColor(this.run.tier, p.act),
         bannerTitle: boss ? boss.name : `${ACTS[p.act].split(' · ')[0]} · STAGE ${p.index + 1}`,
         bannerSub: boss ? boss.sub : w.maze.name.toUpperCase(),
         playerNames: [], showControlsHint: this.run.stage === 0 && w.deathsThisStage === 0,

@@ -21,6 +21,8 @@ export interface Pac {
   fx: Partial<Record<FruitId, number>>;   // active timed effects
   dashCharges: number;
   dashT: number;
+  /** Lime: wall hops left. */
+  phaseCharges: number;
   peelT: number;
   iceDir: Dir;             // ice: the turn currently being slid toward
   iceSlide: number;        // ice: tiles left to slide before iceDir may be taken
@@ -33,7 +35,7 @@ export interface Pac {
 }
 
 export type GhostState = 'house' | 'leaving' | 'active' | 'eyes' | 'entering' | 'gone';
-export type Elite = 'speedy' | 'shielded' | 'splitter' | null;
+export type Elite = 'speedy' | 'shielded' | 'splitter' | 'phantom' | null;
 
 export interface Ghost {
   id: number;
@@ -57,6 +59,10 @@ export interface Ghost {
   history: Vec[];          // positions for conga-line followers
   eatenFlash: number;
   bob: number;
+  /** Phantom: seconds left in the current solid or phasing stretch. */
+  phaseT: number;
+  /** Phantom: passing through walls right now. */
+  phasing: boolean;
 }
 
 export interface TrainCar { x: number; y: number; alive: boolean; color: string; wobble: number }

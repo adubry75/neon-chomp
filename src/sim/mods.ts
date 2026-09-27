@@ -23,6 +23,9 @@ export interface Mods {
   comboCoins: number;       // extra coins per ghost eaten
   fruitStandChoices: number;
   frightSlow: number;       // multiplier on frightened ghost speed
+  powerGrace: number;       // invulnerable seconds when power ends
+  ghostTimeBonus: number;   // power seconds added per ghost eaten
+  fruitPower: number;       // seconds of power granted by eating fruit (0 = off)
 }
 
 export const defaultMods = (): Mods => ({
@@ -30,4 +33,5 @@ export const defaultMods = (): Mods => ({
   clydeFriend: false, shields: 0, pelletBomb: false, tunnelRat: false, pacSpeed: 1, ghostSpeed: 1,
   coinMult: 1, scoreMult: 1, ghostPoints: 1, pelletPoints: 1, startFruit: false, hunted: false,
   blackout: false, magnetRadius: 0, eliteChance: 0, comboCoins: 0, fruitStandChoices: 3, frightSlow: 1,
+  powerGrace: 0, ghostTimeBonus: 0, fruitPower: 0,
 });

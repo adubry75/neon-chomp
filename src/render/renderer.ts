@@ -1,5 +1,5 @@
 import { I_COIN, I_CORE, I_PELLET, I_POWER, T_DOOR, type Maze } from '../sim/maze';
-import type { World } from '../sim/world';
+import { PHANTOM_WARN, type World } from '../sim/world';
 import type { GameEvent, Pac } from '../sim/entities';
 import { FRUITS, type FruitId } from '../data/fruits';
 import { MODIFIERS } from '../sim/modifiers';
@@ -207,6 +207,8 @@ export class Renderer {
       case 'evilGone': this.burst(x, y, '#b45cff', 24, 7, 'square', 0.5, 3); this.ring(x, y, '#ff2d55', 2, 0.4); break;
       case 'evilBack': this.burst(x, y, '#b45cff', 18, 6, 'square', 0.4, 3); this.popup(x, y - 1, 'GLITCH!', '#b45cff', 10, 0.8); this.addShake(3); break;
       case 'evilFlee': this.popup(x, y - 1, 'HE RUNS!', '#5ce1ff', 11, 1); break;
+      case 'phaseHop': this.burst(x, y, '#b6ff3d', 14, 6, 'spark', 0.35); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#b6ff3d', 2, 0.4); this.burst(e.x2, e.y2!, '#b6ff3d', 14, 6, 'spark', 0.35); } break;
+      case 'phaseIn': this.burst(x, y, e.c ?? '#fff', 8, 3, 'dot', 0.4, 2); break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -470,7 +472,14 @@ export class Renderer {
       const eyesOnly = g.state === 'eyes' || g.state === 'entering';
       const frozen = w.freezeT > 0 && g.state === 'active';
       const fright = g.fright && !eyesOnly;
-      const alpha = g.eatenFlash > 0 ? 0.4 + 0.6 * (Math.floor(g.eatenFlash * 10) % 2) : 1;
+      let alpha = g.eatenFlash > 0 ? 0.4 + 0.6 * (Math.floor(g.eatenFlash * 10) % 2) : 1;
+      if (g.elite === 'phantom' && g.state === 'active') {
+        // translucent while phasing, flickers just before a phase
+        if (g.phasing) alpha *= 0.3 + 0.15 * Math.sin(t * 20);
+        else if (g.phaseT < PHANTOM_WARN) alpha *= Math.floor(t * 14) % 2 ? 0.3 : 1;
+        c.save(); c.globalAlpha = 0.35 * alpha; c.strokeStyle = g.color; c.lineWidth = 1.5; c.setLineDash([2, 4]);
+        c.beginPath(); c.arc(g.x * T, g.y * T, r + 5, t * 2, t * 2 + Math.PI * 2); c.stroke(); c.restore();
+      }
       if (g.elite === 'speedy' && g.state === 'active' && !frozen) {
         c.save(); c.globalAlpha = 0.25;
         const dx = g.dir === LEFT ? 1 : g.dir === RIGHT ? -1 : 0, dy = g.dir === UP ? 1 : g.dir === DOWN ? -1 : 0;
@@ -592,6 +601,9 @@ export class Renderer {
     if (p.fx.apple) {
       c.save(); c.strokeStyle = 'rgba(255,64,64,0.25)'; c.lineWidth = 1; c.setLineDash([2, 6]);
       c.beginPath(); c.arc(x, y, 4 * T, t, t + Math.PI * 2); c.stroke(); c.restore();
+    }
+    for (let i = 0; i < p.phaseCharges; i++) {
+      c.save(); c.fillStyle = '#b6ff3d'; c.shadowColor = '#b6ff3d'; c.shadowBlur = 6; c.beginPath(); c.arc(x - 4 + i * 8, y - r - 7, 2.5, 0, Math.PI * 2); c.fill(); c.restore();
     }
     if (p.dashCharges > 0) {
       for (let i = 0; i < p.dashCharges; i++) {

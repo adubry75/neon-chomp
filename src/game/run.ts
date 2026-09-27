@@ -7,6 +7,7 @@ import { generateMaze } from '../sim/mazegen';
 import { FRUIT_IDS, FRUITS, type FruitId } from '../data/fruits';
 import { RARITY_WEIGHT, UPGRADES, type UpgradeDef } from '../data/upgrades';
 import { perkLevel, type MetaSave } from './meta';
+import { twistsFor, type Twists } from '../data/tiers';
 
 export interface StagePlan {
   act: number;       // 0..2
@@ -41,6 +42,7 @@ export class Run {
   seed: number;
   /** Reincarnation tier (0 = the base game). */
   tier: number;
+  twists: Twists;
   rng: Rng;
   players: PlayerInfo[];
   mods: Mods;
@@ -65,6 +67,7 @@ export class Run {
 
   constructor(seed: number, players: PlayerInfo[], meta: MetaSave, tier = 0) {
     this.tier = tier;
+    this.twists = twistsFor(tier);
     this.seed = seed;
     this.rng = new Rng(seed);
     this.players = players;
@@ -74,7 +77,7 @@ export class Run {
     if (perkLevel(meta, 'start_shield')) this.upgrades.afterimage = 1;
     this.lives = 2 + perkLevel(meta, 'start_lives') + (players.length - 1);
     this.coins = 30 * perkLevel(meta, 'start_coins');
-    this.fruitPool = FRUIT_IDS.filter(id => !FRUITS[id].locked || meta.unlockedFruits.includes(id));
+    this.fruitPool = FRUIT_IDS.filter(id => (!FRUITS[id].locked || meta.unlockedFruits.includes(id)) && (FRUITS[id].tier ?? 0) <= tier);
     this.buildPlan();
   }
 
@@ -109,7 +112,7 @@ export class Run {
     return new World({
       mode: 'run', maze, level: p.level, mods: this.mods, modifiers, boss: p.boss,
       players: this.players, seed: (this.seed ^ (this.stage * 0x9e3779b1)) >>> 0,
-      fruitPool: this.fruitPool, lives: this.lives, scoreBase: this.score,
+      fruitPool: this.fruitPool, lives: this.lives, scoreBase: this.score, twists: this.twists,
     });
   }
 
@@ -136,7 +139,7 @@ export class Run {
 
   rollOffers() {
     const n = this.mods.fruitStandChoices;
-    const avail = UPGRADES.filter(u => (this.upgrades[u.id] ?? 0) < u.max);
+    const avail = UPGRADES.filter(u => (this.upgrades[u.id] ?? 0) < u.max && (u.tier ?? 0) <= this.tier);
     const out: UpgradeDef[] = [];
     let curses = 0;
     while (out.length < n && out.length < avail.length) {

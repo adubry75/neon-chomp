@@ -8,6 +8,7 @@ import { FRUITS, type FruitId } from '../data/fruits';
 import type { Mods } from './mods';
 import type { Dozer, EvilBoss, Fruit, GameEvent, Gate, Ghost, MegaBoss, Pac, Peel, Teleporter, TrainCar } from './entities';
 import { resetEvil, setupEvil, updateEvil } from './bosses/evil';
+import { NO_TWISTS, type Twists } from '../data/tiers';
 import { ICE_SLIDE, setupConveyors, setupDozers, setupGates, setupTeleporters, type ModifierId } from './modifiers';
 
 export type GameMode = 'run' | 'royale' | 'squad';
@@ -32,6 +33,8 @@ export interface StageConfig {
   squadPac?: number;
   ghostPlayers?: number[];
   royaleTime?: number;
+  /** Game++ tier twists (default: none). */
+  twists?: Twists;
 }
 
 export const GHOST_COLORS: Record<GhostKind, string> = {
@@ -39,6 +42,8 @@ export const GHOST_COLORS: Record<GhostKind, string> = {
 };
 
 const EXTRA_LIFE_EVERY = 25000;
+/** Phantom cycle: solid (the last PHANTOM_WARN of it flickers), then phasing. */
+export const PHANTOM_SOLID = 6.4, PHANTOM_WARN = 0.9, PHANTOM_PHASE = 2.2;
 const FRUIT_LIFETIME = 10;
 
 export class World {
@@ -47,6 +52,7 @@ export class World {
   pristine: Maze;
   params: LevelParams;
   mods: Mods;
+  twists: Twists;
   rng: Rng;
   time = 0;
   phase: 'ready' | 'play' | 'dying' | 'clear' | 'over' = 'ready';
@@ -110,6 +116,7 @@ export class World {
     this.pristine = cfg.maze.clone();
     this.params = levelParams(cfg.level);
     this.mods = cfg.mods;
+    this.twists = cfg.twists ?? NO_TWISTS;
     this.rng = new Rng(cfg.seed);
     this.score = cfg.scoreBase;
     this.lives = cfg.lives;
@@ -143,7 +150,7 @@ export class World {
     return {
       id: this.idGen++, player, kind, x: this.maze.pacStart.x, y: this.maze.pacStart.y, dir: LEFT, desired: NONE,
       state: 'alive', stateT: 0, color, mouth: 0, moving: false, powerT: 0, invulnT: 0, fx: {},
-      dashCharges: 0, dashT: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
+      dashCharges: 0, dashT: 0, phaseCharges: 0, peelT: 0, iceDir: NONE, iceSlide: 0, lifeT: 0, lives: 3, score: 0, lastTile: -1, ownerId: 0, trail: [],
     };
   }
 
@@ -162,6 +169,7 @@ export class World {
       id: this.idGen++, kind, x: hx, y: hy, dir: LEFT, state: 'house', homeX: hx, homeY: hy, fright: false,
       reversePending: false, stunT: 0, color: GHOST_COLORS[kind], elite: null, shield: 0, human: -1, desired: NONE,
       dotCounter: 0, releaseT: -1, splinter: false, lifeT: 0, king: false, history: [], eatenFlash: 0, bob: this.rng.next() * 6,
+      phaseT: PHANTOM_SOLID * (0.5 + this.rng.next() * 0.5), phasing: false,
     };
   }
 
@@ -182,10 +190,12 @@ export class World {
 
     // Elite variants (never Blinky, never in versus modes)
     if (c.mode === 'run') {
-      const chance = Math.min(0.6, Math.max(0, (c.level - 4) * 0.07) + this.mods.eliteChance);
+      const phantom = this.twists.phantom;
+      const chance = Math.min(0.6, Math.max(0, (c.level - 4) * 0.07) + this.mods.eliteChance + (phantom ? 0.12 : 0));
+      const pool = phantom ? (['speedy', 'shielded', 'splitter', 'phantom', 'phantom'] as const) : (['speedy', 'shielded', 'splitter'] as const);
       for (const g of this.ghosts) {
         if (g.kind === 'blinky' || !this.rng.chance(chance)) continue;
-        g.elite = this.rng.pick(['speedy', 'shielded', 'splitter'] as const);
+        g.elite = this.rng.pick(pool);
         if (g.elite === 'shielded') g.shield = 1;
       }
     }
@@ -224,14 +234,14 @@ export class World {
       } else {
         const s = this.safeSpawn(); p.x = s.x; p.y = s.y; p.dir = i % 2 ? RIGHT : LEFT;
       }
-      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
+      p.state = 'alive'; p.desired = NONE; p.fx = {}; p.dashCharges = 0; p.dashT = 0; p.phaseCharges = 0; p.powerT = 0; p.iceDir = NONE; p.iceSlide = 0;
       p.invulnT = initial ? 0 : 1.2; p.trail = [];
     });
     const stagger = [0, 1.5, 4, 6.5, 9];
     let houseIdx = 0;
     for (const g of this.ghosts) {
       if (g.splinter) { g.state = 'gone'; continue; }
-      g.x = g.homeX; g.y = g.homeY; g.fright = false; g.stunT = 0; g.reversePending = false; g.history = [];
+      g.x = g.homeX; g.y = g.homeY; g.fright = false; g.stunT = 0; g.reversePending = false; g.history = []; g.phasing = false;
       if (g.kind === 'blinky') { g.state = 'active'; g.dir = LEFT; continue; }
       g.state = 'house'; g.dir = houseIdx % 2 ? DOWN : UP;
       if (!initial || this.cfg.mode === 'squad' || this.cfg.boss) g.releaseT = stagger[houseIdx + 1];
@@ -327,6 +337,7 @@ export class World {
         this.powerT = 0;
         for (const g of this.ghosts) g.fright = false;
         if (!mods.chainChomp) this.combo = 0;
+        if (mods.powerGrace > 0) for (const p of this.mainPacs) if (p.state === 'alive') p.invulnT = Math.max(p.invulnT, mods.powerGrace);
         this.emit({ t: 'powerEnd' });
       }
     } else if (this.freezeT <= 0) {
@@ -466,6 +477,7 @@ export class World {
       else if (!ice) tryCorner(p, p.desired, m);
       else if (p.desired !== NONE && p.desired !== p.dir && p.desired !== p.iceDir) { p.iceDir = p.desired; p.iceSlide = ICE_SLIDE; }
     }
+    if (p.phaseCharges > 0 && !p.moving && p.kind === 'main') this.phaseHop(p);
     const stepDist = this.pacSpeed(p) * TICK;
     if (ice) p.iceSlide = Math.max(0, p.iceSlide - stepDist);
 
@@ -501,9 +513,25 @@ export class World {
     if (mag > 0 && p.kind === 'main') this.magnet(p, mag);
   }
 
+  /** Lime: stopped at a tile center, pushing into a wall up to 3 tiles thick with floor beyond it, so hop through. */
+  private phaseHop(p: Pac) {
+    const m = this.maze, d = p.desired;
+    if (d === NONE || !atCenter(p.x) || !atCenter(p.y)) return;
+    const tx = Math.floor(p.x), ty = Math.floor(p.y);
+    if (m.canGo(tx, ty, d, 'pac')) return;
+    let k = 1;
+    while (k <= 3 && m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'phase') && !m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'pac')) k++;
+    if (k === 1 || !m.walkable(tx + DX[d] * k, ty + DY[d] * k, 'pac')) return;
+    const ox = p.x, oy = p.y;
+    p.x = m.wrapX(tx + DX[d] * k) + 0.5; p.y = ty + DY[d] * k + 0.5; p.dir = d;
+    p.phaseCharges--;
+    this.emit({ t: 'phaseHop', x: ox, y: oy, x2: p.x, y2: p.y, c: p.color });
+  }
+
   private endFx(p: Pac, k: FruitId) {
     delete p.fx[k];
     if (k === 'pineapple') p.dashCharges = 0;
+    if (k === 'lime') p.phaseCharges = 0;
     if (k === 'strawberry') for (const c of this.pacs.filter(c => c.kind === 'clone' && c.ownerId === p.id)) this.removePac(c);
     this.emit({ t: 'fxEnd', s: k, p: p.player });
   }
@@ -701,6 +729,7 @@ export class World {
         if (id === 'strawberry') this.spawnClone(p);
         if (id === 'grapes') this.spawnMinis(p, dur);
         if (id === 'pineapple') p.dashCharges = 3;
+        if (id === 'lime') p.phaseCharges = 2;
         if (id === 'banana') p.peelT = 0.2;
       }
     }
@@ -842,6 +871,7 @@ export class World {
         if (this.voidY < Infinity && g.y > this.voidY - 0.3) { this.voidRespawn(g); return; }
         const fireI = Math.floor(g.y) * m.w + m.wrapX(Math.floor(g.x));
         if (this.fire[fireI] > 0 && !g.king) { this.burn(g); return; }
+        if (g.elite === 'phantom') this.phantomCycle(g);
         if (g.reversePending) {
           g.reversePending = false;
           const b = opposite(g.dir);
@@ -874,8 +904,18 @@ export class World {
     }
   }
 
+  /** Solid, then a flicker warning, then phasing through walls, then solid again once back on an open tile. Frightened phantoms never start a phase. */
+  private phantomCycle(g: Ghost) {
+    g.phaseT -= TICK;
+    if (g.phaseT > 0 || g.phasing) return; // a phase ends in ghostDecide, at an open tile center
+    if (g.fright) { g.phaseT = 0.5; return; }
+    g.phasing = true; g.phaseT = PHANTOM_PHASE;
+    this.emit({ t: 'phaseIn', x: g.x, y: g.y, c: g.color });
+  }
+
   private ghostDecide(g: Ghost, x: number, y: number, dir: Dir): Dir {
     const m = this.maze, tx = Math.floor(x), ty = Math.floor(y);
+    if (g.phasing && g.phaseT <= 0 && m.terrainAt(tx, ty) === T_OPEN) { g.phasing = false; g.phaseT = PHANTOM_SOLID; }
     if (g.stunT > 0) return NONE;
     if (g.human >= 0) {
       if (g.desired !== NONE && m.canGo(tx, ty, g.desired, 'ghost')) return g.desired;
@@ -883,11 +923,11 @@ export class World {
       return chooseDir(m, tx, ty, dir, null, 'ghost', this.rng, false);
     }
     const target = g.fright ? null : this.ghostTarget(g);
-    return chooseDir(m, tx, ty, dir, target, 'ghost', g.fright ? this.rng : null, !g.fright && this.cfg.mode === 'run');
+    return chooseDir(m, tx, ty, dir, target, g.phasing ? 'phase' : 'ghost', g.fright ? this.rng : null, !g.fright && this.cfg.mode === 'run');
   }
 
   private sendHome(g: Ghost) {
-    g.fright = false; g.stunT = 0; g.reversePending = false;
+    g.fright = false; g.stunT = 0; g.reversePending = false; g.phasing = false;
     if (this.voidY < Infinity) { this.voidRespawn(g); return; }
     g.state = 'eyes';
     // eyes move on the grid: make sure they sit on a lane
@@ -956,6 +996,12 @@ export class World {
         this.addScore(p, FRUITS[f.id].points); this.addCoins(3);
         this.emit({ t: 'fruitPts', x: f.x, y: f.y, v: FRUITS[f.id].points, c: FRUITS[f.id].color });
         this.applyFruit(p, f.id);
+        if (this.mods.fruitPower > 0) {
+          const before = this.powerT;
+          this.power(p);
+          this.powerT = Math.max(before, this.mods.fruitPower);
+          for (const o of this.mainPacs) o.powerT = this.powerT;
+        }
       }
     }
     // royale PvP
@@ -992,6 +1038,7 @@ export class World {
     this.combo++;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.ghostsEaten++;
+    if (this.mods.ghostTimeBonus > 0 && this.powerT > 0) { this.powerT += this.mods.ghostTimeBonus; for (const o of this.mainPacs) o.powerT = this.powerT; }
     const pts = Math.round(Math.min(200 * 2 ** Math.min(this.combo - 1, 6), 12800) * this.mods.ghostPoints * (this.mods.clydeFriend ? 0.75 : 1));
     this.addScore(p, pts);
     this.addCoins(Math.min(this.combo, 4) + this.mods.comboCoins);

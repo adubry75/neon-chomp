@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Run, actPips } from '../src/game/run';
 import { defaultMeta, migrateMeta, recordWin } from '../src/game/meta';
 import { runCheat, type CheatCtx } from '../src/game/cheats';
-import { MAX_TIER, TIERS, tierLabel, tierSouls } from '../src/data/tiers';
+import { MAX_TIER, TIERS, gagFor, tierLabel, tierSouls, twistsFor } from '../src/data/tiers';
 
 describe('actPips', () => {
   it('marks cleared, current, upcoming and boss', () => {
@@ -149,6 +149,35 @@ describe('save v2', () => {
     expect(recordWin(m, 5)).toBe(null);
     expect(m.tierUnlocked).toBe(5);
     expect(m.tierWins[5]).toBe(1);
+  });
+});
+
+describe('game++ gating', () => {
+  const p = [{ slot: 0, color: '#ffe600' }];
+  it('twists stack by tier', () => {
+    expect(twistsFor(0).phantom).toBe(false);
+    expect(twistsFor(1).phantom).toBe(true);
+    expect(twistsFor(3)).toMatchObject({ phantom: true, megaRemix: true, actIV: true, trainRemix: false });
+    expect(twistsFor(5).evilPac).toBe(true);
+  });
+  it('Lime only spawns from R1', () => {
+    expect(new Run(1, p, defaultMeta(), 0).fruitPool).not.toContain('lime');
+    expect(new Run(1, p, defaultMeta(), 1).fruitPool).toContain('lime');
+  });
+  it('tier upgrades are never offered below their tier', () => {
+    for (let s = 0; s < 40; s++) {
+      const run = new Run(s, p, defaultMeta(), 0);
+      run.mods.fruitStandChoices = 8;
+      run.rollOffers();
+      expect(run.offers.every(u => (u.tier ?? 0) === 0)).toBe(true);
+    }
+  });
+  it('newest gag at or below the tier plays', () => {
+    expect(gagFor(1, 0)).toBe('gag1');
+    expect(gagFor(1, 1)).toBe('gagR1');
+    expect(gagFor(1, 3)).toBe('gagR1');
+    expect(gagFor(1, 4)).toBe('gagR4');
+    expect(gagFor(3, 2)).toBe(null);
   });
 });
 
