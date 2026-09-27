@@ -22,31 +22,38 @@ export function sting(c: Ctx, t: number) {
   const turned = t > 3;
   drawPac(c, VW / 2 - (t > 2.6 ? 40 : 0), y, 18, turned ? RIGHT : LEFT, turned ? 0.35 : 0.04 + 0.26 * Math.abs(Math.sin(t * 3)), '#ffe600');
 
-  if (t > 1.8 && t < 2.6) glitchBars(c, t);
+  if (t > 1.8 && t < 2.6) glitchBars(c, t, y);
   if (t > 3.2) text(c, '...OR IS IT?', VW / 2, 240, 18, Math.floor(t * 3) % 2 ? '#ff2d55' : '#b45cff', 'center', 16);
   if (t > 4) text(c, 'REINCARNATION UNLOCKED', VW / 2, 300, 11, '#5ce1ff', 'center', 10);
 }
 
 function shadowPac(c: Ctx, x: number, y: number, t: number) {
-  drawPac(c, x, y, 18, LEFT, 0.12 + 0.05 * Math.sin(t * 20), '#1a0830', 18);
+  const r = 18, open = 0.18 + 0.04 * Math.sin(t * 20);
   c.save();
-  c.strokeStyle = '#b45cff'; c.lineWidth = 2; c.shadowColor = '#b45cff'; c.shadowBlur = 12;
-  c.beginPath(); c.arc(x, y, 18, 0, Math.PI * 2); c.stroke();
+  c.translate(x, y); c.rotate(Math.PI); // faces left, towards Pac
+  c.beginPath();
+  c.moveTo(-r * 0.15, 0);
+  c.arc(0, 0, r, open * Math.PI, -open * Math.PI + Math.PI * 2);
+  c.closePath();
+  c.fillStyle = '#1a0830'; c.fill();
+  c.strokeStyle = '#b45cff'; c.lineWidth = 2; c.shadowColor = '#b45cff'; c.shadowBlur = 12; c.stroke();
+  c.restore();
+  c.save();
   c.fillStyle = '#ff2d55'; c.shadowColor = '#ff2d55'; c.shadowBlur = 10;
-  c.beginPath(); c.arc(x - 2, y - 8, 3, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(x - 3, y - 9, 3, 0, Math.PI * 2); c.fill();
   c.restore();
 }
 
-/** Slice the frame drawn so far into offset bars with a red/cyan split. */
-function glitchBars(c: Ctx, t: number) {
+/** Slice the frame drawn so far into offset bars with a red/cyan tint. One bar always cuts through Pac. */
+function glitchBars(c: Ctx, t: number, pacY: number) {
   const seed = Math.floor(t * 30);
   const src = c.canvas, k = src.height / VH;
   for (let i = 0; i < 7; i++) {
-    const h = 8 + ((seed * 13 + i * 29) % 40);
-    const yy = (seed * 71 + i * 113) % VH;
-    const dx = (((seed + i) * 37) % 60) - 30;
+    const h = i === 0 ? 14 : 3 + ((seed * 13 + i * 29) % 14);
+    const yy = i === 0 ? pacY - 10 + ((seed * 7) % 12) : (seed * 71 + i * 113) % VH;
+    const dx = (((seed + i) * 37) % 48) - 24;
     c.drawImage(src, 0, yy * k, src.width, h * k, dx, yy, VW, h);
-    c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.25;
+    c.save(); c.globalCompositeOperation = 'lighter'; c.globalAlpha = 0.14;
     c.fillStyle = i % 2 ? '#ff2d55' : '#2de2ff'; c.fillRect(0, yy, VW, h);
     c.restore();
   }
