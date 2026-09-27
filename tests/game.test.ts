@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Run, actPips } from '../src/game/run';
 import { defaultMeta } from '../src/game/meta';
 import { runCheat, type CheatCtx } from '../src/game/cheats';
+import { MAX_TIER, TIERS, tierLabel, tierSouls } from '../src/data/tiers';
 
 describe('actPips', () => {
   it('marks cleared, current, upcoming and boss', () => {
@@ -81,5 +82,20 @@ describe('cheat console', () => {
     const ctx: CheatCtx = { run: null, world: null, jumpToStage: () => {}, rebuildStage: () => {}, toggleSlowmo: () => false };
     expect(runCheat('lives 3', ctx)).toMatch(/^\?/);
     expect(runCheat('help', ctx)).toMatch(/GOD/);
+  });
+});
+
+describe('tiers', () => {
+  it('has R0 through R5', () => {
+    expect(TIERS.map(t => t.id)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(MAX_TIER).toBe(5);
+    expect(tierLabel(0)).toBe('R0 · ARCADE');
+    expect(tierLabel(2)).toBe('R2 · ECHO');
+  });
+  it('scales souls by 1.2 per tier, rounded down', () => {
+    expect(tierSouls(100, 0)).toBe(100);
+    expect(tierSouls(100, 1)).toBe(120);
+    expect(tierSouls(100, 2)).toBe(144);
+    expect(tierSouls(7, 1)).toBe(8); // 8.4 → 8
   });
 });
