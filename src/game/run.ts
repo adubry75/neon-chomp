@@ -26,7 +26,6 @@ export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: strin
 export const ACTS = ['ACT I · NEON DISTRICT', 'ACT II · GHOST RAILS', 'ACT III · THE GLITCH'];
 export const ACT_COLORS = ['#2d7bff', '#ff2df0', '#39ffb4'];
 export const STAGES_PER_ACT = 5;
-export const TOTAL_STAGES = 15;
 
 export type Pip = 'done' | 'current' | 'todo' | 'boss' | 'bossCurrent';
 
@@ -39,6 +38,8 @@ export function actPips(stage: number): Pip[] {
 
 export class Run {
   seed: number;
+  /** Reincarnation tier (0 = the base game). */
+  tier: number;
   rng: Rng;
   players: PlayerInfo[];
   mods: Mods;
@@ -61,7 +62,8 @@ export class Run {
   cheated = false;
   offers: UpgradeDef[] = [];
 
-  constructor(seed: number, players: PlayerInfo[], meta: MetaSave) {
+  constructor(seed: number, players: PlayerInfo[], meta: MetaSave, tier = 0) {
+    this.tier = tier;
     this.seed = seed;
     this.rng = new Rng(seed);
     this.players = players;
@@ -127,7 +129,7 @@ export class Run {
 
   advance(): boolean {
     this.stage++;
-    if (this.stage >= TOTAL_STAGES) { this.won = true; return false; }
+    if (this.stage >= this.plan.length) { this.won = true; return false; }
     return true;
   }
 

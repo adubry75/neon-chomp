@@ -237,10 +237,10 @@ class Game {
     this.startRun(this.players, seed, stage);
   }
 
-  startRun(players: Player[], seed?: number, stage = 0) {
+  startRun(players: Player[], seed?: number, stage = 0, tier = 0) {
     this.mode = 'run';
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
-    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta);
+    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta, tier);
     this.run.stage = stage;
     this.world = null;
     this.meta.runs++; saveMeta(this.meta);
@@ -463,6 +463,7 @@ class Game {
       jumpToStage: i => { this.run!.stage = i; this.startStage(); },
       rebuildStage: () => this.startStage(),
       toggleSlowmo: () => (this.slowmo = !this.slowmo),
+      restartAtTier: t => { this.startRun(this.players, undefined, 0, t); this.run!.cheated = true; },
     });
   }
 

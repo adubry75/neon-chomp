@@ -24,6 +24,7 @@ describe('cheat console', () => {
       jumpToStage: i => calls.push(`jump ${i}`),
       rebuildStage: () => calls.push('rebuild'),
       toggleSlowmo: () => (slow = !slow),
+      restartAtTier: t => calls.push(`tier ${t}`),
     };
     return { run, world, ctx, calls };
   };
@@ -78,8 +79,15 @@ describe('cheat console', () => {
     runCheat('clear', ctx);
     expect(world.maze.pelletsLeft).toBe(0);
   });
+  it('restarts the run on a tier, 0-5 only', () => {
+    const { run, ctx, calls } = setup();
+    expect(runCheat('TIER 9', ctx)).toMatch(/^\?/);
+    expect(run.cheated).toBe(false);
+    expect(runCheat('tier 2', ctx)).toMatch(/^OK/);
+    expect(calls).toContain('tier 2');
+  });
   it('needs a run for run commands', () => {
-    const ctx: CheatCtx = { run: null, world: null, jumpToStage: () => {}, rebuildStage: () => {}, toggleSlowmo: () => false };
+    const ctx: CheatCtx = { run: null, world: null, jumpToStage: () => {}, rebuildStage: () => {}, toggleSlowmo: () => false, restartAtTier: () => {} };
     expect(runCheat('lives 3', ctx)).toMatch(/^\?/);
     expect(runCheat('help', ctx)).toMatch(/GOD/);
   });
@@ -141,5 +149,21 @@ describe('save v2', () => {
     expect(recordWin(m, 5)).toBe(null);
     expect(m.tierUnlocked).toBe(5);
     expect(m.tierWins[5]).toBe(1);
+  });
+});
+
+describe('run tier', () => {
+  const p = [{ slot: 0, color: '#ffe600' }];
+  it('defaults to R0 and stores the tier', () => {
+    expect(new Run(1, p, defaultMeta()).tier).toBe(0);
+    expect(new Run(1, p, defaultMeta(), 3).tier).toBe(3);
+  });
+  it('has 15 stages at every tier (Act IV is not in yet) and the same plan for the same seed', () => {
+    const base = new Run(42, p, defaultMeta(), 0).plan;
+    for (let t = 0; t <= 5; t++) {
+      const plan = new Run(42, p, defaultMeta(), t).plan;
+      expect(plan.length).toBe(15);
+      expect(plan).toEqual(base);
+    }
   });
 });
