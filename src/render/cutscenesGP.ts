@@ -1,4 +1,4 @@
-import { LEFT, RIGHT, UP } from '../sim/types';
+import { DOWN, LEFT, RIGHT, UP } from '../sim/types';
 import { drawPac, drawShadowPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
 
@@ -82,4 +82,36 @@ export function gagR1(c: Ctx, t: number) {
     // the red eye tracks Pac
     c.save(); c.globalAlpha = 0.5 + 0.5 * Math.sin(t * 5); text(c, '. . .', 510, roof - 52, 8, '#ff2d55', 'center', 6); c.restore();
   }
+}
+
+const hop = (t: number, t0: number, h: number, len = 0.6) => (t >= t0 && t <= t0 + len ? -Math.sin((Math.PI * (t - t0)) / len) * h : 0);
+
+/** R2 (Act II→III): Pac does a little routine; the shadow copies it half a beat late, and badly. */
+export function gagR2(c: Ctx, t: number) {
+  const y = VH / 2 + 60;
+  street(c, y + 26);
+  // Pac: hop, turn around and back, step-chomp, hop
+  const pTurn = t > 1.8 && t < 2.2 ? LEFT : RIGHT;
+  const pStep = t > 3 && t < 3.6 ? Math.sin(((t - 3) / 0.6) * Math.PI) * 30 : 0;
+  const py = y + hop(t, 0.6, 50) + hop(t, 4.2, 50);
+  const pMouth = t > 6.4 ? 0.3 + 0.1 * Math.sin(t * 20) : 0.04 + 0.26 * Math.abs(Math.sin(t * 8));
+  drawPac(c, 220 + pStep, py, 18, pTurn, pMouth, '#ffe600');
+  // Shadow, 0.5s late: hops way too high, spins until dizzy, steps the wrong way, then flops
+  const sx = 450 - (t > 3.5 && t < 4.1 ? -Math.sin(((t - 3.5) / 0.6) * Math.PI) * 30 : 0);
+  let sy = y + hop(t, 1.1, 240, 1.1);
+  const spinning = t > 2.3 && t < 3.4;
+  const dirs = [LEFT, UP, RIGHT, DOWN] as const;
+  const sDir = spinning ? dirs[Math.floor(t * 12) % 4] : LEFT;
+  if (t > 4.7 && t < 5.3) sy += hop(t, 4.7, 60);
+  if (t >= 5.3) {
+    // splat: a flattened shadow that slowly puffs back up
+    const k = Math.min(1, Math.max(0, (t - 6.2) / 1.2));
+    c.save(); c.translate(sx, y + 18 - 18 * k); c.scale(1.6 - 0.6 * k, 0.25 + 0.75 * k);
+    drawShadowPac(c, 0, 0, 18, LEFT, 0.12);
+    c.restore();
+    if (t < 6.4) text(c, 'x x', sx, y - 6, 8, '#ff2d55', 'center', 4);
+  } else drawShadowPac(c, sx, sy, 18, sDir, 0.12 + 0.05 * Math.sin(t * 20));
+  if (spinning || (t > 3.4 && t < 4)) text(c, '@', sx + 20, y - 34, 10, '#b45cff', 'center', 6);
+  if (t > 6.4 && t < 8) text(c, 'HA!', 220, py - 44, 14, '#ffe600', 'center', 10);
+  if (t > 7) text(c, 'PRACTICE MAKES PERFECT...', VW / 2, 240, 12, Math.floor(t * 3) % 2 ? '#ff2d55' : '#b45cff', 'center', 12);
 }

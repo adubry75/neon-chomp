@@ -75,6 +75,10 @@ export interface Gate { tx: number; ty: number; open: boolean }
 export interface MegaBoss {
   x: number; y: number; hp: number; maxHp: number; r: number;
   invulnT: number; spawnT: number; vx: number; vy: number;
+  /** Remix: one of the two halves after the split. */
+  half: boolean;
+  /** R2+ variant that splits at half health. */
+  remix: boolean;
 }
 
 /** Final boss: follows P1's recorded path `delay` seconds behind, flees while P1 is powered. */

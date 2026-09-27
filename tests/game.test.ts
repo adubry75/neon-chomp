@@ -187,12 +187,44 @@ describe('run tier', () => {
     expect(new Run(1, p, defaultMeta()).tier).toBe(0);
     expect(new Run(1, p, defaultMeta(), 3).tier).toBe(3);
   });
-  it('has 15 stages at every tier (Act IV is not in yet) and the same plan for the same seed', () => {
-    const base = new Run(42, p, defaultMeta(), 0).plan;
-    for (let t = 0; t <= 5; t++) {
-      const plan = new Run(42, p, defaultMeta(), t).plan;
-      expect(plan.length).toBe(15);
-      expect(plan).toEqual(base);
-    }
+  it('keeps the first 15 stages (mazes, modifiers) the same at every tier', () => {
+    const strip = (s: { mazeSeed: unknown; modifiers: unknown; level: number; act: number }) => [s.mazeSeed, s.modifiers, s.level, s.act];
+    const base = new Run(42, p, defaultMeta(), 0).plan.slice(0, 15).map(strip);
+    for (let t = 0; t <= 5; t++) expect(new Run(42, p, defaultMeta(), t).plan.slice(0, 15).map(strip)).toEqual(base);
+  });
+  it('swaps in Mega Blinky EX from R2', () => {
+    expect(new Run(42, p, defaultMeta(), 1).plan[4].boss).toBe('mega');
+    expect(new Run(42, p, defaultMeta(), 2).plan[4].boss).toBe('mega2');
+  });
+});
+
+describe('heat and Game++ perks', () => {
+  const p = [{ slot: 0, color: '#ffe600' }];
+  it('applies heat rules to the run mods and counts points', () => {
+    const run = new Run(1, p, defaultMeta(), 2, ['stingy_stand', 'overclock', 'bogus']);
+    expect(run.heat).toEqual(['stingy_stand', 'overclock']);
+    expect(run.heatPoints).toBe(4);
+    expect(run.mods.fruitStandChoices).toBe(2);
+    expect(run.mods.pacSpeed).toBeCloseTo(1.1);
+  });
+  it('No Refunds blocks buying lives', () => {
+    const run = new Run(1, p, defaultMeta(), 5, ['no_refunds']);
+    run.coins = 999;
+    expect(run.buyLife()).toBe(false);
+  });
+  it('Free Reroll perk makes the first reroll at each stand free', () => {
+    const meta = { ...defaultMeta(), perks: { gp_reroll: 1 } };
+    const run = new Run(1, p, meta, 2);
+    run.coins = 0;
+    run.openStand();
+    expect(run.rerollCost).toBe(0);
+    expect(run.reroll()).toBe(true);
+    expect(run.reroll()).toBe(false); // the second one costs coins
+    run.openStand();
+    expect(run.rerollCost).toBe(0);
+  });
+  it('Head Start grants one common upgrade', () => {
+    const run = new Run(3, p, { ...defaultMeta(), perks: { gp_headstart: 1 } }, 2);
+    expect(Object.values(run.upgrades).reduce((a, b) => a + b, 0)).toBe(1);
   });
 });

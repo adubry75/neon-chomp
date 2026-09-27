@@ -1,5 +1,6 @@
 import type { FruitId } from '../data/fruits';
 import { MAX_TIER, TIERS } from '../data/tiers';
+import { HEAT_SKINS } from '../data/heat';
 
 export interface MetaSave {
   v: 2;
@@ -16,6 +17,8 @@ export interface MetaSave {
   heatBest: number;
   /** One-time cutscenes already shown, e.g. 'sting'. */
   seenCutscenes: string[];
+  /** Heat rules switched on for the next run. */
+  heatPicked: string[];
   unlockedFruits: FruitId[];
   perks: Record<string, number>;
   skin: string;
@@ -26,7 +29,7 @@ const KEY = 'neon-chomp-save-v1';
 
 export const defaultMeta = (): MetaSave => ({
   v: 2, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0,
-  tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [],
+  tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [], heatPicked: [],
   unlockedFruits: [], perks: {}, skin: '#ffe600',
   settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true },
 });
@@ -40,6 +43,7 @@ export function migrateMeta(raw: Partial<Omit<MetaSave, 'v'>> & { v?: number }):
     perks: { ...raw.perks },
     tierWins: d.tierWins.map((_, i) => raw.tierWins?.[i] ?? 0),
     seenCutscenes: [...(raw.seenCutscenes ?? [])],
+    heatPicked: [...(raw.heatPicked ?? [])],
   };
   // v1 → v2: a player who has already won starts with Reincarnation 1 open.
   if ((raw.v ?? 1) < 2) m.tierUnlocked = (raw.wins ?? 0) > 0 ? 1 : 0;
@@ -74,6 +78,10 @@ export interface MetaItem {
   kind: 'fruit' | 'perk' | 'skin';
   fruit?: FruitId;
   color?: string;
+  /** Only listed once this reincarnation tier is unlocked. */
+  minTier?: number;
+  /** Can only be taken after clearing a run at this much heat. */
+  minHeat?: number;
 }
 
 export const META_ITEMS: MetaItem[] = [
@@ -86,11 +94,16 @@ export const META_ITEMS: MetaItem[] = [
   { id: 'start_coins', name: 'Allowance', desc: '+30 starting coins per level.', cost: l => 20 + l * 25, max: 3, kind: 'perk' },
   { id: 'stand_choice', name: 'VIP Stand', desc: '+1 Fruit Stand choice.', cost: () => 90, max: 1, kind: 'perk' },
   { id: 'start_shield', name: 'Lucky Charm', desc: 'Start runs with Afterimage (1 shield).', cost: () => 60, max: 1, kind: 'perk' },
+  { id: 'gp_reroll', name: 'Free Reroll', desc: 'Your first reroll at every stand is free.', cost: () => 120, max: 1, kind: 'perk', minTier: 2 },
+  { id: 'gp_headstart', name: 'Head Start', desc: 'Start each run with a random common upgrade.', cost: () => 150, max: 1, kind: 'perk', minTier: 2 },
+  { id: 'gp_souls', name: 'Soul Magnet', desc: '+15% souls from every run.', cost: () => 200, max: 1, kind: 'perk', minTier: 2 },
   { id: 'skin_mint', name: 'Skin: Mint', desc: 'Cosmetic.', cost: () => 10, max: 1, kind: 'skin', color: '#5cffc8' },
   { id: 'skin_pink', name: 'Skin: Hot Pink', desc: 'Cosmetic.', cost: () => 10, max: 1, kind: 'skin', color: '#ff5cf0' },
   { id: 'skin_white', name: 'Skin: Ghost White', desc: 'Cosmetic.', cost: () => 20, max: 1, kind: 'skin', color: '#f4f4ff' },
   { id: 'skin_gold', name: 'Skin: Solid Gold', desc: 'Cosmetic. Flex.', cost: () => 60, max: 1, kind: 'skin', color: '#ffb300' },
 ];
+
+for (const s of HEAT_SKINS) META_ITEMS.push({ id: s.id, name: s.name, desc: `Clear a run at heat ${s.heat}+.`, cost: () => 0, max: 1, kind: 'skin', color: s.color, minTier: 2, minHeat: s.heat });
 
 export const perkLevel = (m: MetaSave, id: string) => m.perks[id] ?? 0;
 

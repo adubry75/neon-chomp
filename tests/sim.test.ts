@@ -367,3 +367,33 @@ describe('R1 upgrades', () => {
     expect(w.powerT).toBeGreaterThan(before);
   });
 });
+
+describe('R2', () => {
+  it('Mega Blinky EX splits at half health and needs 6 hits', () => {
+    const w = new World({ ...cfg(21), boss: 'mega2' });
+    w.phase = 'play';
+    let hits = 0;
+    for (let k = 0; k < 10 && !w.bossDefeated; k++) {
+      for (let i = 0; i < 60; i++) { w.pacs[0].invulnT = 1; w.update(); }
+      const b = w.megas.find(b => b.hp > 0)!;
+      b.invulnT = 0; w.powerT = 5; w.hitStop = 0;
+      const p = w.pacs[0]; p.x = b.x; p.y = b.y; p.state = 'alive';
+      w.update(); hits++;
+      if (hits === 2) expect(w.megas.length).toBe(2);
+    }
+    expect(hits).toBe(6);
+    expect(w.bossDefeated).toBe(true);
+  });
+  it('Lean Maze leaves 2 power pellets; Iron Ghosts shields everyone but Blinky', () => {
+    const mods = defaultMods(); mods.leanMaze = true; mods.ironGhosts = true;
+    const w = new World({ ...cfg(4), mods });
+    expect(Array.from(w.maze.items).filter(i => i === 2).length).toBe(2);
+    expect(w.ghosts.filter(g => g.kind !== 'blinky').every(g => g.shield === 1)).toBe(true);
+  });
+  it('Phantom Plague turns every elite into a phantom', () => {
+    const mods = defaultMods(); mods.allPhantom = true; mods.eliteChance = 1;
+    const elites = [1, 2, 3, 4, 5, 6].flatMap(s => new World({ ...cfg(s), mods, level: 10 }).ghosts.filter(g => g.elite));
+    expect(elites.length).toBeGreaterThan(0);
+    expect(elites.every(g => g.elite === 'phantom')).toBe(true);
+  });
+});

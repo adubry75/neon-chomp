@@ -8,6 +8,7 @@ import { FRUIT_IDS, FRUITS, type FruitId } from '../data/fruits';
 import { RARITY_WEIGHT, UPGRADES, type UpgradeDef } from '../data/upgrades';
 import { perkLevel, type MetaSave } from './meta';
 import { twistsFor, type Twists } from '../data/tiers';
+import { HEAT_BY_ID, heatPoints } from '../data/heat';
 
 export interface StagePlan {
   act: number;       // 0..2
@@ -19,6 +20,7 @@ export interface StagePlan {
 }
 
 export const BOSS_INFO: Record<BossId, { name: string; sub: string; rules: string[]; color: string }> = {
+  mega2: { name: 'MEGA BLINKY EX', sub: 'Chomp him at half health and he splits in two.', rules: ['POWER UP AND CHOMP HIM. AT HALF HEALTH', 'HE SPLITS: CHOMP BOTH HALVES. 6 HITS.'], color: '#ff2d55' },
   mega: { name: 'MEGA BLINKY', sub: 'Only power pellets hurt him. 4 hits.', rules: ['EAT A POWER PELLET, THEN CHOMP HIM.', '4 HITS TO WIN. PELLETS RESPAWN.'], color: '#ff2d55' },
   train: { name: 'GHOST TRAIN KING', sub: 'Eat every car, then the King.', rules: ['POWER UP AND EAT ALL 12 TRAIN CARS,', 'THEN CHOMP THE KING.'], color: '#ffd23d' },
   evil: { name: 'EVIL PAC', sub: 'He follows your path. Never double back.', rules: ["HE FOLLOWS YOUR PATH. DON'T DOUBLE BACK.", 'POWER UP, THEN CHOMP HIM. 3 HITS.'], color: '#b45cff' },
@@ -43,6 +45,11 @@ export class Run {
   /** Reincarnation tier (0 = the base game). */
   tier: number;
   twists: Twists;
+  /** Heat rule ids this run is playing with. */
+  heat: string[];
+  /** Game++ perk: one free reroll per stand. */
+  freeRerollPerk: boolean;
+  freeRerollReady = false;
   rng: Rng;
   players: PlayerInfo[];
   mods: Mods;
@@ -65,8 +72,10 @@ export class Run {
   cheated = false;
   offers: UpgradeDef[] = [];
 
-  constructor(seed: number, players: PlayerInfo[], meta: MetaSave, tier = 0) {
+  constructor(seed: number, players: PlayerInfo[], meta: MetaSave, tier = 0, heat: string[] = []) {
     this.tier = tier;
+    this.heat = heat.filter(id => HEAT_BY_ID[id]);
+    this.freeRerollPerk = perkLevel(meta, 'gp_reroll') > 0;
     this.twists = twistsFor(tier);
     this.seed = seed;
     this.rng = new Rng(seed);
@@ -78,7 +87,20 @@ export class Run {
     this.lives = 2 + perkLevel(meta, 'start_lives') + (players.length - 1);
     this.coins = 30 * perkLevel(meta, 'start_coins');
     this.fruitPool = FRUIT_IDS.filter(id => (!FRUITS[id].locked || meta.unlockedFruits.includes(id)) && (FRUITS[id].tier ?? 0) <= tier);
+    for (const id of this.heat) HEAT_BY_ID[id].apply(this.mods);
     this.buildPlan();
+    if (perkLevel(meta, 'gp_headstart')) {
+      const commons = UPGRADES.filter(u => u.rarity === 'common' && (u.tier ?? 0) <= tier && u.id !== 'snack_time');
+      this.take(this.rng.pick(commons));
+    }
+  }
+
+  get heatPoints() { return heatPoints(this.heat); }
+
+  /** A new Fruit Stand: fresh offers, and the free reroll (if the perk is owned) is ready again. */
+  openStand() {
+    this.freeRerollReady = this.freeRerollPerk;
+    this.rollOffers();
   }
 
   private buildPlan() {
@@ -86,14 +108,14 @@ export class Run {
     const gentle: ModifierId[] = ['conveyor', 'teleport', 'ghostTrain'];
     for (let a = 0; a < 3; a++) {
       for (let s = 0; s < STAGES_PER_ACT; s++) {
-        const boss: BossId | null = s === 4 ? (['mega', 'train', 'eater'] as const)[a] : null;
+        const boss: BossId | null = s === 4 ? ([this.twists.megaRemix ? 'mega2' : 'mega', 'train', 'eater'] as const)[a] : null;
         let modifiers: ModifierId[] = [];
         if (!boss) {
           if (a === 0 && s >= 2) modifiers = [this.rng.pick(gentle)];
           if (a === 1) modifiers = [this.rng.pick(pool)];
           if (a === 2) modifiers = this.rng.shuffle([...pool]).slice(0, 2);
         }
-        const classic = (a === 0 && s === 0) || boss === 'mega';
+        const classic = (a === 0 && s === 0) || boss === 'mega' || boss === 'mega2';
         this.plan.push({
           act: a, index: s, level: a * 4 + Math.min(s, 3) + 1 + (boss ? 1 : 0), boss, modifiers,
           mazeSeed: classic ? 'classic' : Math.floor(this.rng.next() * 2 ** 31),
@@ -161,16 +183,17 @@ export class Run {
   }
 
   get lifeCost() { return 45 + this.livesBought * 30; }
-  get rerollCost() { return 12 + this.rerolls * 8; }
+  get rerollCost() { return this.freeRerollReady ? 0 : 12 + this.rerolls * 8; }
 
   buyLife(): boolean {
-    if (this.coins < this.lifeCost) return false;
+    if (this.mods.noLives || this.coins < this.lifeCost) return false;
     this.coins -= this.lifeCost; this.livesBought++; this.lives++;
     return true;
   }
   reroll(): boolean {
     if (this.coins < this.rerollCost) return false;
-    this.coins -= this.rerollCost; this.rerolls++;
+    if (this.freeRerollReady) this.freeRerollReady = false;
+    else { this.coins -= this.rerollCost; this.rerolls++; }
     this.rollOffers();
     return true;
   }

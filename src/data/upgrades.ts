@@ -52,6 +52,10 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'glow_up', name: 'Glow Up', desc: '1.5s of invulnerability when power runs out.', rarity: 'common', max: 2, glyph: '✧', tier: 1, apply: r => { r.mods.powerGrace += 1.5; } },
   { id: 'combo_keeper', name: 'Combo Keeper', desc: 'Each ghost eaten adds +0.75s of power.', rarity: 'rare', max: 2, glyph: '⟳', tier: 1, apply: r => { r.mods.ghostTimeBonus += 0.75; } },
   { id: 'fruit_punch', name: 'Fruit Punch', desc: 'Eating fruit gives a 3s power surge.', rarity: 'rare', max: 1, glyph: '✺', tier: 1, apply: r => { r.mods.fruitPower = 3; } },
+  // ── Game++ (R2 Echo) ──
+  { id: 'echo_pellet', name: 'Echo Pellet', desc: 'The first power pellet you eat in a maze comes back once after 20s.', rarity: 'rare', max: 1, glyph: '◎', tier: 2, apply: r => { r.mods.powerEcho = true; } },
+  { id: 'overcharge', name: 'Overcharge', desc: 'Power pellets stun every ghost for 1s.', rarity: 'epic', max: 1, glyph: '⚡', tier: 2, apply: r => { r.mods.powerStun = 1; } },
+  { id: 'soul_siphon', name: 'Soul Siphon', desc: '+25% souls from this run.', rarity: 'common', max: 2, glyph: '♨', tier: 2, apply: r => { r.mods.soulMult += 0.25; } },
   // ── curses (risk / reward) ──
   { id: 'glass_cannon', name: 'Glass Cannon', desc: 'Lose ALL extra lives. Score x3, coins x2.', rarity: 'curse', max: 1, glyph: '◇', apply: r => { r.lives = 0; r.mods.scoreMult *= 3; r.mods.coinMult *= 2; } },
   { id: 'hunted', name: 'Hunted', desc: 'A 5th ghost stalks you. +1 stand choice, score x1.25.', rarity: 'curse', max: 1, glyph: '☠', apply: r => { r.mods.hunted = true; r.mods.fruitStandChoices += 1; r.mods.scoreMult *= 1.25; } },

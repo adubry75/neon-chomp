@@ -168,7 +168,7 @@ export function drawGhost(ctx: Ctx, x: number, y: number, r: number, color: stri
     ctx.closePath(); ctx.fill();
     ctx.shadowBlur = 0;
   }
-  if (look.elite === 'shielded' && (look.shield ?? 0) > 0) {
+  if ((look.shield ?? 0) > 0) {
     ctx.strokeStyle = '#7fd8ff'; ctx.lineWidth = 2; ctx.shadowColor = '#7fd8ff'; ctx.shadowBlur = 10;
     ctx.beginPath();
     for (let i = 0; i <= 6; i++) { const a = (i / 6) * Math.PI * 2 + t; const px = Math.cos(a) * r * 1.35, py = Math.sin(a) * r * 1.35; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }

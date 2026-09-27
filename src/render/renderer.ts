@@ -7,6 +7,7 @@ import type { Pip } from '../game/run';
 import { DOWN, LEFT, RIGHT, UP, NONE } from '../sim/types';
 import { FONT, T, drawFruit, drawGhost, drawPac, drawShadowPac, panel, star, text, type Ctx } from './draw';
 import { trailPoint } from '../sim/bosses/evil';
+import { megaHealth } from '../sim/bosses/mega';
 
 export const VW = 28 * T;           // 672
 export const HUD_TOP = 3 * T;       // 72
@@ -209,6 +210,7 @@ export class Renderer {
       case 'evilFlee': this.popup(x, y - 1, 'HE RUNS!', '#5ce1ff', 11, 1); break;
       case 'phaseHop': this.burst(x, y, '#b6ff3d', 14, 6, 'spark', 0.35); if (e.x2 !== undefined) { this.ring(e.x2, e.y2!, '#b6ff3d', 2, 0.4); this.burst(e.x2, e.y2!, '#b6ff3d', 14, 6, 'spark', 0.35); } break;
       case 'phaseIn': this.burst(x, y, e.c ?? '#fff', 8, 3, 'dot', 0.4, 2); break;
+      case 'megaSplit': this.burst(x, y, '#ff2d55', 50, 12, 'square', 0.8, 4); this.popup(x, y - 2, 'HE SPLIT!', '#ff5c7a', 18, 1.6); this.addShake(12); this.flash = 0.3; this.flashColor = '#ff2d55'; break;
       case 'clank': this.burst(x, y, '#ffd23d', 5, 4, 'square', 0.3, 2); break;
     }
   }
@@ -492,12 +494,12 @@ export class Renderer {
       if (g.human >= 0) text(c, `P${g.human + 1}`, g.x * T, g.y * T - T * 0.95, 8, g.color, 'center', 4);
     }
     // mega boss
-    const b = w.mega;
-    if (b && b.hp > 0) {
+    for (const b of w.megas) {
+      if (b.hp <= 0) continue;
       const vuln = w.powerT > 0 || w.freezeT > 0;
       const blink = b.invulnT > 0 && Math.floor(b.invulnT * 12) % 2 === 0;
       if (!blink) {
-        drawGhost(c, b.x * T, b.y * T, b.r * T, '#ff2d55', b.vx < 0 ? LEFT : RIGHT,
+        drawGhost(c, b.x * T, b.y * T, b.r * T, b.half ? '#ff3b3b' : '#ff2d55', b.vx < 0 ? LEFT : RIGHT,
           { t, fright: vuln && w.powerT > 0, flash: vuln && flashing, frozen: w.freezeT > 0, king: true });
       }
       for (let i = 0; i < b.maxHp; i++) {
@@ -808,7 +810,7 @@ export class Renderer {
     const boss = hud.boss;
     if (!boss) return;
     let label = boss.name, segs = 0, left = 0;
-    if (w.cfg.boss === 'mega' && w.mega) { segs = w.mega.maxHp; left = Math.max(0, w.mega.hp); }
+    if (w.megas.length) { const h = megaHealth(w); segs = h.total; left = h.left; }
     else if (w.cfg.boss === 'train') {
       segs = 12; left = w.cars.filter(c => c.alive).length;
       if (left === 0 && !w.bossDefeated) { label = 'KING EXPOSED!'; segs = 1; left = 1; }

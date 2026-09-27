@@ -9,6 +9,7 @@ import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
 import { META_ITEMS, defaultMeta, loadMeta, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
 import { TIERS, actColor, gagFor, tierLabel, tierSouls } from './data/tiers';
+import { HEAT_BY_ID, HEAT_RULES, HEAT_SKINS, MAX_HEAT, heatPoints, heatSoulMult } from './data/heat';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
 import { FRUITS, FRUIT_IDS } from './data/fruits';
 import { MODIFIERS } from './sim/modifiers';
@@ -16,7 +17,7 @@ import { generateMaze } from './sim/mazegen';
 import { defaultMods } from './sim/mods';
 import { DOWN, LEFT, NONE, RIGHT, TICK, UP, type Dir } from './sim/types';
 
-type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene';
+type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene' | 'heat';
 type LobbyMode = 'coop' | 'royale' | 'squad';
 
 const PLAYER_COLORS = ['#ffe600', '#5cff8a', '#ff5cf0', '#f4f4ff'];
@@ -85,7 +86,7 @@ class Game {
 
   trackFor() {
     switch (this.scene) {
-      case 'title': case 'meta': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
+      case 'title': case 'meta': case 'heat': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
       case 'stand': case 'cutscene': return 'stand';
       case 'pause': return 'none';
       case 'play': return this.world?.cfg.boss ? 'boss' : 'play';
@@ -113,6 +114,7 @@ class Game {
       case 'meta': this.metaShop(); break;
       case 'settings': this.settingsScene(); break;
       case 'help': this.help(); break;
+      case 'heat': this.heatScene(); break;
       case 'versus': this.versusResults(); break;
       case 'cutscene': this.cutscene(dt); break;
     }
@@ -158,7 +160,17 @@ class Game {
     }
     if (chase) { c.save(); c.fillStyle = '#fff4e0'; c.shadowColor = '#fff'; c.shadowBlur = 14; c.beginPath(); c.arc(VW - 40, y, 7, 0, Math.PI * 2); c.fill(); c.restore(); }
 
-    const items = ['SOLO RUN', 'CO-OP RUN  (1-4P)', 'CHOMP ROYALE  (2-4P)', 'GHOST SQUAD  (2-4P)', 'SOUL SHOP', 'HOW TO PLAY', 'SETTINGS'];
+    const entries: [string, () => void][] = [
+      ['SOLO RUN', () => this.startSolo()],
+      ['CO-OP RUN  (1-4P)', () => this.openLobby('coop')],
+      ...(this.meta.tierUnlocked >= 2 ? [[`HEAT  ${this.activeHeat().length ? heatPoints(this.activeHeat()) : 'OFF'}`, () => this.go('heat')] as [string, () => void]] : []),
+      ['CHOMP ROYALE  (2-4P)', () => this.openLobby('royale')],
+      ['GHOST SQUAD  (2-4P)', () => this.openLobby('squad')],
+      ['SOUL SHOP', () => this.go('meta')],
+      ['HOW TO PLAY', () => this.go('help')],
+      ['SETTINGS', () => this.go('settings')],
+    ];
+    const items = entries.map(e => e[0]);
     this.menuNav(items.length);
     if (this.meta.tierUnlocked > 0 && this.cursor <= 1) {
       const d = this.input.menuDirEdge, n = this.meta.tierUnlocked + 1;
@@ -177,16 +189,42 @@ class Game {
     text(c, 'ENTER / SPACE / (A) TO SELECT   ·   M TO MUTE', VW / 2, VH - 40, 7, '#5a5290', 'center', 0);
     if (this.input.confirm()) {
       this.audio.ui('select');
-      switch (this.cursor) {
-        case 0: this.startSolo(); break;
-        case 1: this.openLobby('coop'); break;
-        case 2: this.openLobby('royale'); break;
-        case 3: this.openLobby('squad'); break;
-        case 4: this.go('meta'); break;
-        case 5: this.go('help'); break;
-        case 6: this.go('settings'); break;
-      }
+      entries[this.cursor]?.[1]();
     }
+  }
+
+  /** Heat rules picked and still unlocked (a progress reset can lock them again). */
+  activeHeat() { return this.meta.heatPicked.filter(id => (HEAT_BY_ID[id]?.tier ?? 99) <= this.meta.tierUnlocked); }
+
+  // ───────────────────────── heat ─────────────────────────
+
+  heatScene() {
+    const c = this.r.ctx, m = this.meta;
+    text(c, 'HEAT', VW / 2, 80, 26, '#ff6a3d', 'center', 16);
+    text(c, 'OPTIONAL RULES FOR BRAGGING RIGHTS  ·  +10% SOULS PER POINT', VW / 2, 120, 7, '#8f86c9', 'center', 0);
+    this.menuNav(HEAT_RULES.length + 1);
+    HEAT_RULES.forEach((r, i) => {
+      const y = 170 + i * 64, sel = i === this.cursor;
+      const locked = r.tier > m.tierUnlocked, on = m.heatPicked.includes(r.id) && !locked;
+      if (sel) panel(c, 30, y - 22, VW - 60, 52, '#ff6a3d', 'rgba(50,20,10,0.8)');
+      text(c, locked ? `R${r.tier}` : on ? '■' : '□', 62, y + 2, locked ? 9 : 16, locked ? '#5a5290' : on ? '#ff6a3d' : '#8f86c9', 'center', on ? 8 : 0);
+      text(c, locked ? '???' : r.name.toUpperCase(), 92, y - 6, 10, locked ? '#5a5290' : on ? '#fff' : '#b8b0e8', 'left', 0);
+      text(c, locked ? `UNLOCKS AT REINCARNATION ${r.tier}` : r.desc, 92, y + 12, 6, '#8f86c9', 'left', 0);
+      text(c, `+${r.points}`, VW - 54, y + 2, 12, locked ? '#5a5290' : '#ff6a3d', 'right', 0);
+    });
+    const pts = heatPoints(this.activeHeat());
+    const y0 = 170 + HEAT_RULES.length * 64;
+    text(c, `HEAT ${pts}/${MAX_HEAT}   ·   SOULS x${heatSoulMult(pts).toFixed(1)}   ·   BEST CLEAR ${m.heatBest}`, VW / 2, y0 + 4, 9, '#ffd23d', 'center', 6);
+    text(c, HEAT_SKINS.map(s => `${m.heatBest >= s.heat ? '✓' : '·'} HEAT ${s.heat}: ${s.name.replace('Skin: ', '').toUpperCase()}`).join('   '), VW / 2, y0 + 34, 6, '#8f86c9', 'center', 0);
+    const backSel = this.cursor === HEAT_RULES.length;
+    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, y0 + 80, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
+    if (this.input.back() || (this.input.confirm() && backSel)) { this.audio.ui('back'); this.go('title'); return; }
+    if (!this.input.confirm()) return;
+    const r = HEAT_RULES[this.cursor];
+    if (r.tier > m.tierUnlocked) { this.audio.ui('deny'); return; }
+    m.heatPicked = m.heatPicked.includes(r.id) ? m.heatPicked.filter(id => id !== r.id) : [...m.heatPicked, r.id];
+    saveMeta(m);
+    this.audio.ui('select');
   }
 
   // ───────────────────────── lobby ─────────────────────────
@@ -253,7 +291,7 @@ class Game {
   startRun(players: Player[], seed?: number, stage = 0, tier = 0) {
     this.mode = 'run';
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
-    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta, tier);
+    this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta, tier, this.activeHeat());
     this.run.stage = stage;
     this.world = null;
     this.meta.runs++; saveMeta(this.meta);
@@ -416,7 +454,7 @@ class Game {
           this.playCutscenes(ids, () => this.endRun(true));
           return;
         }
-        run.rollOffers();
+        run.openStand();
         this.standMsg = '';
         this.go('stand');
       } else this.endRun(false);
@@ -447,7 +485,8 @@ class Game {
     const run = this.run!;
     run.won = won;
     // cheated runs never touch the save
-    const souls = run.cheated ? 0 : tierSouls(soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won), run.tier);
+    const bonus = heatSoulMult(run.heatPoints) * run.mods.soulMult * (1 + 0.15 * perkLevel(this.meta, 'gp_souls'));
+    const souls = run.cheated ? 0 : Math.floor(tierSouls(soulsForRun(run.score, run.stagesCleared, run.bossesBeaten, won), run.tier) * bonus);
     const newBest = !run.cheated && run.score > this.meta.best;
     let unlocked: number | null = null;
     if (!run.cheated) {
@@ -456,6 +495,7 @@ class Game {
       this.meta.bossesBeaten += run.bossesBeaten;
       if (won) {
         unlocked = recordWin(this.meta, run.tier);
+        this.meta.heatBest = Math.max(this.meta.heatBest, run.heatPoints);
         if (!this.meta.seenCutscenes.includes('sting')) this.meta.seenCutscenes.push('sting');
         if (unlocked !== null) this.tier = unlocked;
       }
@@ -578,7 +618,7 @@ class Game {
       const owned = run.upgrades[u.id] ?? 0;
       if (owned) text(c, `OWNED ${owned}/${u.max}`, x + cw / 2, y + 280 + lift, 6, '#8fa0ff', 'center', 0);
     });
-    const shop = [`+1 LIFE  (${run.lifeCost}c)`, `REROLL  (${run.rerollCost}c)`, 'SKIP  (+15c)'];
+    const shop = [run.mods.noLives ? 'NO LIVES (HEAT)' : `+1 LIFE  (${run.lifeCost}c)`, run.freeRerollReady ? 'REROLL  (FREE)' : `REROLL  (${run.rerollCost}c)`, 'SKIP  (+15c)'];
     shop.forEach((s, i) => {
       const x = 40 + i * ((VW - 80) / 3), w = (VW - 80) / 3 - 10;
       const sel = rowShop && i === this.cursor;
@@ -611,7 +651,7 @@ class Game {
         this.audio.ui('buy');
         this.nextStage();
       } else if (this.cursor === 0) {
-        if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
+        if (run.buyLife()) { this.audio.ui('buy'); this.standMsg = '+1 LIFE!'; } else { this.audio.ui('deny'); this.standMsg = run.mods.noLives ? 'NO REFUNDS: HEAT RULE' : 'NOT ENOUGH COINS'; }
       } else if (this.cursor === 1) {
         if (run.reroll()) { this.audio.ui('buy'); this.standMsg = 'FRESH FRUIT!'; } else { this.audio.ui('deny'); this.standMsg = 'NOT ENOUGH COINS'; }
       } else {
@@ -683,13 +723,18 @@ class Game {
     const c = this.r.ctx, m = this.meta;
     text(c, 'SOUL SHOP', VW / 2, 70, 24, '#b45cff', 'center', 16);
     text(c, `GHOST SOULS: ${m.souls}`, VW / 2, 112, 11, '#fff', 'center', 6);
-    const items = META_ITEMS;
+    const items = META_ITEMS.filter(it => (it.minTier ?? 0) <= m.tierUnlocked);
     this.menuNav(items.length + 1);
+    const ROWS = 13, top = Math.max(0, Math.min(this.cursor - 6, items.length - ROWS));
+    if (top > 0) text(c, '▲', VW / 2, 134, 8, '#8f86c9', 'center', 0);
+    if (top + ROWS < items.length) text(c, '▼', VW / 2, 150 + ROWS * 44 - 14, 8, '#8f86c9', 'center', 0);
     items.forEach((it, i) => {
+      if (i < top || i >= top + ROWS) return;
       const lvl = it.kind === 'fruit' ? (m.unlockedFruits.includes(it.fruit!) ? 1 : 0) : it.kind === 'skin' ? (m.perks[it.id] ?? 0) : perkLevel(m, it.id);
       const maxed = lvl >= it.max;
+      const heatLocked = !lvl && (it.minHeat ?? 0) > m.heatBest;
       const sel = i === this.cursor;
-      const y = 150 + i * 44;
+      const y = 150 + (i - top) * 44;
       if (sel) panel(c, 30, y - 18, VW - 60, 38, '#b45cff', 'rgba(40,20,70,0.8)');
       if (it.kind === 'fruit') drawFruit(c, it.fruit!, 58, y, 10, this.r.time);
       else if (it.kind === 'skin') drawPac(c, 58, y, 10, RIGHT, 0.2, it.color!, 8);
@@ -697,11 +742,11 @@ class Game {
       text(c, it.name.toUpperCase() + (it.max > 1 ? ` ${lvl}/${it.max}` : ''), 80, y - 6, 9, maxed ? '#5cff8a' : '#fff', 'left', 0);
       text(c, it.desc, 80, y + 9, 6, '#8f86c9', 'left', 0);
       const equipped = it.kind === 'skin' && m.skin === it.color;
-      const label = it.kind === 'skin' && lvl ? (equipped ? 'EQUIPPED' : 'EQUIP') : maxed ? 'OWNED' : `${it.cost(lvl)} SOULS`;
+      const label = it.kind === 'skin' && lvl ? (equipped ? 'EQUIPPED' : 'EQUIP') : maxed ? 'OWNED' : heatLocked ? `HEAT ${it.minHeat}` : it.cost(lvl) ? `${it.cost(lvl)} SOULS` : 'FREE';
       text(c, label, VW - 50, y, 9, maxed && !(it.kind === 'skin') ? '#5cff8a' : m.souls >= it.cost(lvl) || (it.kind === 'skin' && lvl) ? '#ffe600' : '#5a5290', 'right', 0);
     });
     const backSel = this.cursor === items.length;
-    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, 150 + items.length * 44 + 10, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
+    text(c, (backSel ? '> ' : '') + 'BACK', VW / 2, 150 + Math.min(items.length, ROWS) * 44 + 10, 12, backSel ? '#fff' : '#8f86c9', 'center', 0);
     if (this.input.back()) { this.audio.ui('back'); this.go('title'); return; }
     if (!this.input.confirm()) return;
     if (backSel) { this.audio.ui('back'); this.go('title'); return; }
@@ -709,6 +754,7 @@ class Game {
     const lvl = it.kind === 'fruit' ? (m.unlockedFruits.includes(it.fruit!) ? 1 : 0) : (m.perks[it.id] ?? 0);
     if (it.kind === 'skin' && lvl) { m.skin = it.color!; saveMeta(m); this.audio.ui('select'); return; }
     if (lvl >= it.max) { this.audio.ui('deny'); return; }
+    if ((it.minHeat ?? 0) > m.heatBest) { this.audio.ui('deny'); this.say(`CLEAR A RUN AT HEAT ${it.minHeat}`); return; }
     const cost = it.cost(lvl);
     if (m.souls < cost) { this.audio.ui('deny'); this.say('NOT ENOUGH SOULS'); return; }
     m.souls -= cost;
