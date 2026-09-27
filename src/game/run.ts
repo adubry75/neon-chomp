@@ -130,6 +130,8 @@ export class Run {
         });
       }
     }
+    // R5: the finale is its own one-stage act
+    if (this.twists.evilPac) this.plan.push({ act: 4, index: 0, level: 17, boss: 'evil', modifiers: [], mazeSeed: Math.floor(this.rng.next() * 2 ** 31) });
   }
 
   get current(): StagePlan { return this.plan[this.stage]; }

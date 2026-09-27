@@ -54,6 +54,7 @@ const GAGS: { act: number; tier: number; id: string }[] = [
   { act: 1, tier: 0, id: 'gag1' }, { act: 1, tier: 1, id: 'gagR1' }, { act: 1, tier: 4, id: 'gagR4' },
   { act: 2, tier: 0, id: 'gag2' }, { act: 2, tier: 2, id: 'gagR2' },
   { act: 3, tier: 3, id: 'gagR3' },
+  { act: 4, tier: 5, id: 'faceoff' },
 ];
 export function gagFor(act: number, tier: number): string | null {
   let best: string | null = null, bt = -1;

@@ -203,6 +203,15 @@ describe('run tier', () => {
     expect(plan.slice(15, 19).every(s => s.act === 3 && s.modifiers[0] === 'derez' && s.modifiers.length === 2)).toBe(true);
     expect(plan[19].boss).toBe('null');
   });
+  it('adds the Evil Pac finale as stage 21 at R5', () => {
+    expect(new Run(42, p, defaultMeta(), 4).plan.length).toBe(20);
+    const plan = new Run(42, p, defaultMeta(), 5).plan;
+    expect(plan.length).toBe(21);
+    expect(plan[20]).toMatchObject({ act: 4, boss: 'evil' });
+    expect(actPips(plan, 20)).toEqual(['bossCurrent']);
+    expect(gagFor(4, 5)).toBe('faceoff');
+    expect(new Run(42, p, defaultMeta(), 5).plan.slice(0, 20).map(s => s.boss)).toEqual(new Run(42, p, defaultMeta(), 4).plan.map(s => s.boss));
+  });
   it('swaps in Mega Blinky EX from R2', () => {
     expect(new Run(42, p, defaultMeta(), 1).plan[4].boss).toBe('mega');
     expect(new Run(42, p, defaultMeta(), 2).plan[4].boss).toBe('mega2');

@@ -305,7 +305,7 @@ class Game {
     this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
     this.run = new Run(Math.floor(Math.random() * 2 ** 31) >>> 0, [{ slot: 0, color: this.meta.skin }], this.meta, 5);
     this.run.cheated = true;
-    this.run.plan = [{ act: 2, index: 4, level: 16, boss: 'evil', modifiers: [], mazeSeed: 4242 }];
+    this.run.plan = [{ act: 4, index: 0, level: 17, boss: 'evil', modifiers: [], mazeSeed: 4242 }];
     this.world = null;
     this.startStage();
   }
@@ -449,7 +449,7 @@ class Game {
       run.absorb(w);
       if (w.done === 'clear') {
         if (!run.advance()) {
-          const ids: CutsceneId[] = ['ending'];
+          const ids: CutsceneId[] = run.twists.evilPac ? ['trueEnding', 'credits'] : ['ending'];
           if (!run.cheated && !this.meta.seenCutscenes.includes('sting')) ids.push('sting');
           this.playCutscenes(ids, () => this.endRun(true));
           return;
@@ -665,8 +665,9 @@ class Game {
   results() {
     const c = this.r.ctx, run = this.run!, info = this.resultInfo!;
     this.r.time += 1 / 60;
-    text(c, info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
-    if (info.won) text(c, 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
+    const finale = info.won && run.twists.evilPac;
+    text(c, finale ? 'YOU BEAT YOURSELF!' : info.won ? 'YOU BEAT THE GLITCH!' : 'GAME OVER', VW / 2, 110, info.won ? 22 : 30, info.won ? '#5cff8a' : '#ff2d55', 'center', 20);
+    if (info.won) text(c, finale ? 'THE GLITCH IS GONE. FOR REAL THIS TIME.' : 'NEON CITY IS SAFE... FOR NOW', VW / 2, 150, 9, '#ffe600', 'center', 8);
     if (info.unlocked !== null) text(c, `${tierLabel(info.unlocked)} UNLOCKED`, VW / 2, 180, 10, Math.floor(this.r.time * 3) % 2 ? TIERS[info.unlocked].color : '#fff', 'center', 12);
     const p = run.plan[Math.min(run.stage, run.plan.length - 1)];
     const rows: [string, string][] = [

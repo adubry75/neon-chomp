@@ -1,5 +1,5 @@
 import { DOWN, LEFT, RIGHT, UP } from '../sim/types';
-import { drawPac, drawShadowPac, text, type Ctx } from './draw';
+import { drawGhost, drawPac, drawShadowPac, text, type Ctx } from './draw';
 import { VH, VW } from './renderer';
 
 /** Game++ cutscenes. Each is a pure function of time, like cutscenes.ts. */
@@ -189,4 +189,117 @@ export function gagR4(c: Ctx, t: number) {
   if (t > 3.6 && t < 4.6) text(c, '?', px, y - 40, 14, '#ffe600', 'center', 8);
   if (t > 5.2 && t < 6.4) text(c, '!!', px, y - 40, 18, '#ff2d55', 'center', 10);
   if (t > 6.6) text(c, 'IT ALMOST LOOKS LIKE YOU NOW...', VW / 2, 240, 11, Math.floor(t * 3) % 2 ? '#ff2d55' : '#b45cff', 'center', 12);
+}
+
+/** R5, before the finale: Pac and Evil Pac face off, mirroring each other move for move. */
+export function faceoff(c: Ctx, t: number) {
+  const y = VH / 2 + 40;
+  // split-screen tint: your side, his side
+  c.save();
+  c.globalAlpha = Math.min(0.18, t * 0.1);
+  c.fillStyle = '#ffe600'; c.fillRect(0, 0, VW / 2, VH);
+  c.fillStyle = '#b45cff'; c.fillRect(VW / 2, 0, VW / 2, VH);
+  c.restore();
+  street(c, y + 26);
+  // both step in, in perfect sync
+  const step = Math.min(1, t / 1.5) * 90 + (t > 3 && t < 3.4 ? Math.sin(((t - 3) / 0.4) * Math.PI) * 20 : 0);
+  const bob = t > 4 && t < 5 ? hop(t, 4, 30) : 0;
+  const mouth = t > 5.2 ? 0.34 : 0.04 + 0.26 * Math.abs(Math.sin(t * 6));
+  drawPac(c, 150 + step, y + bob, 22, RIGHT, mouth, '#ffe600');
+  drawShadowPac(c, VW - 150 - step, y + bob, 22, LEFT, mouth);
+  // lightning between them
+  if (t > 2 && Math.floor(t * 7) % 5 === 0) {
+    c.save(); c.strokeStyle = '#fff'; c.lineWidth = 2; c.shadowColor = '#b45cff'; c.shadowBlur = 16;
+    c.beginPath(); let lx = VW / 2 - 60, ly = y - 20; c.moveTo(lx, ly);
+    for (let k = 0; k < 6; k++) { lx += 20; ly += (k % 2 ? 1 : -1) * (8 + ((Math.floor(t * 7) * 13 + k * 7) % 10)); c.lineTo(lx, ly); }
+    c.stroke(); c.restore();
+  }
+  if (t > 1.6) text(c, 'YOU', 150 + step, y - 60, 12, '#ffe600', 'center', 8);
+  if (t > 1.6) text(c, 'ALSO YOU', VW - 150 - step, y - 60, 12, '#b45cff', 'center', 8);
+  if (t > 2.4) text(c, 'VS', VW / 2, y - 120, 30, Math.floor(t * 4) % 2 ? '#ff2d55' : '#fff', 'center', 20);
+  if (t > 6.6) { c.save(); c.globalAlpha = Math.min(1, (t - 6.6) / 0.6); c.fillStyle = '#fff'; c.fillRect(0, 0, VW, VH); c.restore(); }
+}
+
+/** After Evil Pac falls: the glitch shatters, its pixels rain down as pellets, and everyone (ghosts too) celebrates. */
+export function trueEnding(c: Ctx, t: number) {
+  const y = VH / 2 + 80;
+  street(c, y + 26);
+  if (t < 2.2) {
+    // the shadow shatters into drifting squares
+    const k = t / 2.2;
+    if (t < 0.5) drawShadowPac(c, VW / 2, y - 120, 30, LEFT, 0.2 + Math.random() * 0.1);
+    c.save(); c.fillStyle = '#b45cff'; c.shadowColor = '#b45cff'; c.shadowBlur = 10;
+    for (let i = 0; i < 40; i++) {
+      const a = i * 2.39, r = k * (60 + (i % 7) * 30);
+      c.globalAlpha = 1 - k;
+      c.fillRect(VW / 2 + Math.cos(a) * r, y - 120 + Math.sin(a) * r - k * 60, 6, 6);
+    }
+    c.restore();
+    if (t > 0.4) text(c, 'GLITCH DELETED', VW / 2, 200, 16, '#ff2d55', 'center', 14);
+    return;
+  }
+  const t2 = t - 2.2;
+  // pellets rain down onto the street
+  c.save(); c.fillStyle = '#ffe9c4'; c.shadowColor = '#ffd9a0'; c.shadowBlur = 8;
+  for (let i = 0; i < 24; i++) {
+    const px = 40 + i * 26, py = Math.min(y, -20 + (t2 * 260 - i * 18));
+    if (px < 60 + t2 * 70) continue; // Pac has eaten these
+    c.beginPath(); c.arc(px, py, 3, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
+  // Pac chomps along, the ghosts follow, not scared, just happy
+  const px = Math.min(VW - 120, 40 + t2 * 70);
+  const party = t2 > 5.5;
+  drawPac(c, px, y + (party ? hop(t2 % 0.6, 0, 12, 0.6) : 0), 18, RIGHT, 0.04 + 0.26 * Math.abs(Math.sin(t * 12)), '#ffe600');
+  const cols = ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'];
+  cols.forEach((col, i) => {
+    const gx = px - 60 - i * 44;
+    if (gx < -30) return;
+    drawGhost(c, gx, y + (party ? hop((t2 + i * 0.15) % 0.6, 0, 12, 0.6) : Math.sin(t * 5 + i) * 3), 16, col, RIGHT, { t: t + i });
+  });
+  if (party) {
+    c.save();
+    for (let i = 0; i < 30; i++) {
+      c.fillStyle = ['#ff2d55', '#ffe600', '#5ce1ff', '#b45cff', '#5cff8a'][i % 5];
+      c.fillRect((i * 97 + t * 40) % VW, ((i * 53 + t * 140) % (y - 40)), 5, 8);
+    }
+    c.restore();
+  }
+  if (t2 > 1) text(c, 'THE GLITCH IS GONE.', VW / 2, 200, 16, '#5cff8a', 'center', 14);
+  if (t2 > 3) text(c, '...FOR REAL THIS TIME.', VW / 2, 240, 11, '#ffe600', 'center', 10);
+  if (t2 > 6.5) text(c, 'THE END', VW / 2, 320, 30, Math.floor(t * 2) % 2 ? '#ffe600' : '#ff2df0', 'center', 20);
+}
+
+const CREDITS: [string, string][] = [
+  ['NEON CHOMP', ''],
+  ['A PAC-MAN ROGUELITE REMIX', ''],
+  ['', ''],
+  ['GAME DESIGN & PLAYTESTING', 'ADUBRY75'],
+  ['SENIOR CODE REVIEWER', 'THE CAT'],
+  ['CODE, ART & SOUND', 'CLAUDE'],
+  ['', ''],
+  ['STARRING', 'PAC'],
+  ['AND', 'EVIL PAC'],
+  ['WITH', 'THE GHOSTS, WHO ARE FINE NOW'],
+  ['', ''],
+  ['NO GHOSTS WERE HARMED', '(THEY RESPAWN)'],
+  ['', ''],
+  ['THANKS FOR PLAYING!', ''],
+];
+
+/** Scrolling credits, with Pac and the ghosts chasing across the bottom. */
+export function credits(c: Ctx, t: number) {
+  const top = VH - 100 - t * 88;
+  c.save(); c.beginPath(); c.rect(0, 0, VW, VH - 120); c.clip();
+  CREDITS.forEach(([a, b], i) => {
+    const y = top + i * 64;
+    if (y < -40 || y > VH + 40) return;
+    const big = i === 0 || i === CREDITS.length - 1;
+    text(c, a, VW / 2, y, big ? 20 : 9, big ? '#ffe600' : '#8fa0ff', 'center', big ? 14 : 4);
+    if (b) text(c, b, VW / 2, y + 22, 12, '#fff', 'center', 8);
+  });
+  c.restore();
+  const px = ((t * 120) % (VW + 300)) - 100, y = VH - 80;
+  drawPac(c, px, y, 12, RIGHT, 0.04 + 0.26 * Math.abs(Math.sin(t * 12)), '#ffe600');
+  ['#ff2d55', '#ff8cf0', '#2de2ff', '#ffab2d'].forEach((col, i) => drawGhost(c, px - 40 - i * 30, y, 11, col, RIGHT, { t: t + i }));
 }
