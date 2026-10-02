@@ -20,7 +20,7 @@ npm run build:single   # → dist/neon-chomp.html, ONE self-contained file (JS i
 `build:single` runs `scripts/build-single.mjs`, which builds with Vite and then inlines the JS bundle into an HTML shell. The only external request is the Google Fonts stylesheet for "Press Start 2P" (it falls back to monospace when offline).
 
 ## Debug URLs
-- `?auto=run&seed=123&stage=N`: jump straight into a run. `stage` is a 0-based index into the run plan (5 stages per act, and index 4 of each act is the boss). With the current plan, 4 = Mega Blinky, 9 = Train King, 14 = Maze Eater. Add `&tier=N` (0-5) to start on a reincarnation tier.
+- `?auto=run&seed=123&stage=N`: jump straight into a run. `stage` is a 0-based index into the run plan (5 stages per act, and index 4 of each act is the boss). With the current plan, 4 = Mega Blinky, 9 = Train King, 14 = Maze Eater. Add `&tier=N` (0-5) to start on a reincarnation tier. Debug runs are marked cheated and do not save progress or high scores.
 - `?auto=royale` (4 players) and `?auto=squad` (3 players): jump into the versus modes.
 - `?auto=evil`: the Evil Pac finale on its own (never saved).
 - With `&tier=3` and up, Act IV adds stages 15-19 (19 = the Null); at `&tier=5`, stage 20 is Evil Pac.
@@ -36,6 +36,7 @@ npm run build:single   # → dist/neon-chomp.html, ONE self-contained file (JS i
 
 **Modes**
 - **Solo Run**: roguelite of 3 acts × (4 mazes + boss). After each maze you pick an upgrade at the Fruit Stand, where you can also spend coins on lives and rerolls.
+- **High Scores**: the ten best local Solo Run scores are available from the title screen. A qualifying run prompts for a name after the results screen. Type up to 12 letters, digits or spaces and press Enter to save; Esc skips. On a gamepad, use the D-pad to select and change letters, A to save and B to delete. Cheated and Co-op runs do not enter this table.
 - **Reincarnations (Game++)**: winning unlocks the next tier, picked with left/right on the title screen. Tiers stack:
   - **R1 Afterglow**: phantom elite ghosts that phase through walls, the Lime fruit, new palettes.
   - **R2 Echo**: Mega Blinky EX splits in two, Game++ perks, and the Heat menu.
@@ -68,7 +69,7 @@ Press the backtick key (`` ` ``) to open it. The game pauses while it's open. En
 | `SLOWMO` | Toggle half speed |
 
 ## Save data
-Meta progress (souls, unlocks, perks, skins, best score, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field, currently `2`. The key keeps its old `-v1` name so existing saves are found. v2 added `tierUnlocked`, `tierWins`, `heatBest`, `seenCutscenes` and `heatPicked`, and `migrateMeta()` upgrades v1 saves (a save with a win starts with R1 unlocked). **If you change the save shape, bump the version and migrate in `migrateMeta()`** so existing progress isn't lost.
+Meta progress (souls, unlocks, perks, skins, best score, high scores, settings) is stored in `localStorage` under the key `neon-chomp-save-v1` (see `src/game/meta.ts`). It includes a `v` field, currently `3`. The key keeps its old `-v1` name so existing saves are found. v2 added reincarnation progress, and v3 added the local high score table and remembered player name. `migrateMeta()` upgrades older saves; a previous best score appears as a `LEGACY` entry with unknown tier and heat. **If you change the save shape, bump the version and migrate in `migrateMeta()`** so existing progress isn't lost.
 
 ## Layout
 - `src/sim/`: pure game simulation (no DOM). Runs a fixed 60 Hz step with a seeded RNG, so it is deterministic. `world.ts` is the core.

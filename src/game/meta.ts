@@ -3,9 +3,11 @@ import { MAX_TIER, TIERS } from '../data/tiers';
 import { HEAT_SKINS } from '../data/heat';
 
 export interface MetaSave {
-  v: 2;
+  v: 3;
   souls: number;
   best: number;
+  highScores: HighScoreEntry[];
+  lastPlayerName: string;
   runs: number;
   wins: number;
   bossesBeaten: number;
@@ -27,20 +29,32 @@ export interface MetaSave {
   settings: { bloom: number; crt: boolean; music: number; sfx: number; shake: boolean };
 }
 
+export interface HighScoreEntry {
+  name: string;
+  score: number;
+  tier: number | null;
+  heat: number | null;
+  won: boolean | null;
+}
+
 const KEY = 'neon-chomp-save-v1';
 
 export const defaultMeta = (): MetaSave => ({
-  v: 2, souls: 0, best: 0, runs: 0, wins: 0, bossesBeaten: 0,
+  v: 3, souls: 0, best: 0, highScores: [], lastPlayerName: '', runs: 0, wins: 0, bossesBeaten: 0,
   tierUnlocked: 0, tierWins: TIERS.map(() => 0), heatBest: 0, seenCutscenes: [], heatPicked: [], tierStarted: 0,
   unlockedFruits: [], perks: {}, skin: '#ffe600',
   settings: { bloom: 2, crt: false, music: 0.6, sfx: 0.8, shake: true },
 });
 
-/** Bring any saved shape (v1 or v2) up to the current MetaSave. */
+/** Bring any saved shape (v1, v2 or v3) up to the current MetaSave. */
 export function migrateMeta(raw: Partial<Omit<MetaSave, 'v'>> & { v?: number }): MetaSave {
   const d = defaultMeta();
   const m: MetaSave = {
-    ...d, ...raw, v: 2,
+    ...d, ...raw, v: 3,
+    highScores: (raw.v ?? 1) < 3
+      ? (raw.best ?? 0) > 0 ? [{ name: 'LEGACY', score: raw.best!, tier: null, heat: null, won: null }] : []
+      : [...(raw.highScores ?? [])],
+    lastPlayerName: raw.lastPlayerName ?? '',
     settings: { ...d.settings, ...raw.settings },
     perks: { ...raw.perks },
     tierWins: d.tierWins.map((_, i) => raw.tierWins?.[i] ?? 0),
@@ -68,6 +82,20 @@ export function recordWin(m: MetaSave, tier: number): number | null {
   m.tierWins[tier]++;
   if (tier === m.tierUnlocked && tier < MAX_TIER) return ++m.tierUnlocked;
   return null;
+}
+
+export function qualifiesForHighScore(entries: Pick<HighScoreEntry, 'score'>[], score: number): boolean {
+  return Number.isFinite(score) && score > 0 && (entries.length < 10 || score > Math.min(...entries.map(e => e.score)));
+}
+
+export function submitHighScore(m: MetaSave, name: string, score: number, tier: number, heat: number, won: boolean): boolean {
+  if (!qualifiesForHighScore(m.highScores, score)) return false;
+  const cleanName = name.toUpperCase().replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12).trim() || 'PLAYER';
+  m.highScores = [...m.highScores, { name: cleanName, score, tier, heat, won }]
+    .sort((a, b) => b.score - a.score).slice(0, 10);
+  m.lastPlayerName = cleanName;
+  m.best = Math.max(m.best, score);
+  return true;
 }
 
 export function saveMeta(m: MetaSave) {

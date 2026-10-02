@@ -7,7 +7,7 @@ import { Run, ACTS, BOSS_INFO, STAGES_PER_ACT, actPips } from './game/run';
 import { CUTSCENE_LEN, drawCutscene, skipAfter, type CutsceneId } from './render/cutscenes';
 import { drawUpgradeChips, drawUpgradeList } from './render/upgrades';
 import { runCheat } from './game/cheats';
-import { META_ITEMS, defaultMeta, loadMeta, newTierWaiting, perkLevel, recordWin, saveMeta, soulsForRun, type MetaSave } from './game/meta';
+import { META_ITEMS, defaultMeta, loadMeta, newTierWaiting, perkLevel, qualifiesForHighScore, recordWin, saveMeta, soulsForRun, submitHighScore, type MetaSave } from './game/meta';
 import { TIERS, actColor, gagFor, tierLabel, tierSouls } from './data/tiers';
 import { HEAT_BY_ID, HEAT_RULES, HEAT_SKINS, MAX_HEAT, heatPoints, heatSoulMult } from './data/heat';
 import { RARITY_COLOR, type UpgradeDef } from './data/upgrades';
@@ -17,12 +17,13 @@ import { generateMaze } from './sim/mazegen';
 import { defaultMods } from './sim/mods';
 import { DOWN, LEFT, NONE, RIGHT, TICK, UP, type Dir } from './sim/types';
 
-type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene' | 'heat';
+type Scene = 'title' | 'lobby' | 'play' | 'pause' | 'stand' | 'results' | 'nameEntry' | 'highscores' | 'meta' | 'settings' | 'help' | 'versus' | 'cutscene' | 'heat';
 type LobbyMode = 'coop' | 'royale' | 'squad';
 
 const PLAYER_COLORS = ['#ffe600', '#5cff8a', '#ff5cf0', '#f4f4ff'];
 const DEVICES: DeviceId[] = ['kbL', 'kbR', 'pad0', 'pad1', 'pad2', 'pad3'];
 const DEVICE_LABEL: Record<DeviceId, string> = { kb: 'KEYBOARD', kbL: 'WASD + SPACE', kbR: 'ARROWS + ENTER', pad0: 'GAMEPAD 1', pad1: 'GAMEPAD 2', pad2: 'GAMEPAD 3', pad3: 'GAMEPAD 4' };
+const NAME_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
 
 interface Player { slot: number; device: DeviceId | 'solo'; color: string }
 
@@ -46,6 +47,9 @@ class Game {
   squadTotals: Record<number, number> = {};
   lastRound: { title: string; lines: [string, string][] } | null = null;
   resultInfo: { won: boolean; souls: number; newBest: boolean; cheated: boolean; unlocked: number | null } | null = null;
+  nameDraft = '';
+  nameCursor = 0;
+  nameTyped = false;
   /** Reincarnation tier the next Solo/Co-op run starts on (picked on the title screen). */
   tier = 0;
   toast = '';
@@ -68,8 +72,11 @@ class Game {
     this.input.onFirstGesture = () => { this.audio.init(); this.audio.play(this.trackFor()); };
     (window as unknown as { __game: Game }).__game = this;
     window.addEventListener('keydown', e => this.consoleKey(e));
+    window.addEventListener('keydown', e => this.nameKey(e));
     const q = new URLSearchParams(location.search);
-    if (q.get('auto') === 'run') this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0, Math.min(5, Math.max(0, Number(q.get('tier')) || 0)));
+    if (q.get('auto') === 'run') {
+      this.startSolo(Number(q.get('seed')) || undefined, Number(q.get('stage')) || 0, Math.min(5, Math.max(0, Number(q.get('tier')) || 0)), true);
+    }
     if (q.get('auto') === 'evil') this.startEvilPrototype();
     if (q.get('auto') === 'royale') { this.players = [0, 1, 2, 3].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startRoyale(); }
     if (q.get('auto') === 'squad') { this.players = [0, 1, 2].map(i => ({ slot: i, device: DEVICES[i], color: PLAYER_COLORS[i] })); this.startSquad(); }
@@ -86,7 +93,7 @@ class Game {
 
   trackFor() {
     switch (this.scene) {
-      case 'title': case 'meta': case 'heat': case 'settings': case 'help': case 'lobby': case 'results': case 'versus': return 'title';
+      case 'title': case 'meta': case 'heat': case 'settings': case 'help': case 'lobby': case 'results': case 'nameEntry': case 'highscores': case 'versus': return 'title';
       case 'stand': case 'cutscene': return 'stand';
       case 'pause': return 'none';
       case 'play': return this.world?.cfg.boss ? 'boss' : 'play';
@@ -111,6 +118,8 @@ class Game {
       case 'pause': this.pause(); break;
       case 'stand': this.stand(); break;
       case 'results': this.results(); break;
+      case 'nameEntry': this.nameEntry(); break;
+      case 'highscores': this.highScores(); break;
       case 'meta': this.metaShop(); break;
       case 'settings': this.settingsScene(); break;
       case 'help': this.help(); break;
@@ -166,6 +175,7 @@ class Game {
       ...(this.meta.tierUnlocked >= 2 ? [[`HEAT  ${this.activeHeat().length ? heatPoints(this.activeHeat()) : 'OFF'}`, () => this.go('heat')] as [string, () => void]] : []),
       ['CHOMP ROYALE  (2-4P)', () => this.openLobby('royale')],
       ['GHOST SQUAD  (2-4P)', () => this.openLobby('squad')],
+      ['HIGH SCORES', () => this.go('highscores')],
       ['SOUL SHOP', () => this.go('meta')],
       ['HOW TO PLAY', () => this.go('help')],
       ['SETTINGS', () => this.go('settings')],
@@ -183,9 +193,11 @@ class Game {
       text(c, `NEW! ${tierLabel(this.meta.tierUnlocked)} UNLOCKED`, VW / 2, 272, 12, pulse ? '#ffe600' : '#ff2df0', 'center', pulse ? 14 : 6);
       if (this.cursor > 1) text(c, 'PICK IT ON SOLO RUN OR CO-OP RUN WITH LEFT / RIGHT', VW / 2, 345, 7, '#8f86c9', 'center', 0);
     }
+    const menuY = entries.length > 8 ? 390 : 380;
+    const menuStep = entries.length > 8 ? 40 : 46;
     items.forEach((s, i) => {
       const sel = i === this.cursor;
-      const yy = 380 + i * 46;
+      const yy = menuY + i * menuStep;
       if (sel) { panel(c, VW / 2 - 200, yy - 18, 400, 36, '#ffe600', 'rgba(40,20,60,0.7)'); drawPac(c, VW / 2 - 175, yy, 9, RIGHT, 0.05 + 0.25 * Math.abs(Math.sin(t * 10)), '#ffe600', 8); }
       text(c, s, VW / 2, yy, 13, sel ? '#fff' : '#8f86c9', 'center', sel ? 10 : 0);
     });
@@ -293,18 +305,19 @@ class Game {
 
   // ───────────────────────── run flow ─────────────────────────
 
-  startSolo(seed?: number, stage = 0, tier = this.tier) {
+  startSolo(seed?: number, stage = 0, tier = this.tier, cheated = false) {
     this.players = [{ slot: 0, device: 'solo', color: this.meta.skin }];
-    this.startRun(this.players, seed, stage, tier);
+    this.startRun(this.players, seed, stage, tier, cheated);
   }
 
-  startRun(players: Player[], seed?: number, stage = 0, tier = 0) {
+  startRun(players: Player[], seed?: number, stage = 0, tier = 0, cheated = false) {
     this.mode = 'run';
     const infos: PlayerInfo[] = players.map(p => ({ slot: p.slot, color: p.color }));
     this.run = new Run(seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0), infos, this.meta, tier, this.activeHeat());
+    this.run.cheated = cheated;
     this.run.stage = stage;
     this.world = null;
-    this.meta.runs++; saveMeta(this.meta);
+    if (!cheated) { this.meta.runs++; saveMeta(this.meta); }
     if (stage === 0) this.playCutscenes(['intro', 'title0'], () => this.startStage());
     else this.startStage();
   }
@@ -518,6 +531,7 @@ class Game {
   // ───────────────────────── cheat console ─────────────────────────
 
   consoleKey(e: KeyboardEvent) {
+    if (this.scene === 'nameEntry') return;
     const con = this.cheat;
     if (e.code === 'Backquote') {
       e.preventDefault();
@@ -550,7 +564,7 @@ class Game {
       jumpToStage: i => { this.run!.stage = i; this.startStage(); },
       rebuildStage: () => this.startStage(),
       toggleSlowmo: () => (this.slowmo = !this.slowmo),
-      restartAtTier: t => { this.startRun(this.players, undefined, 0, t); this.run!.cheated = true; },
+      restartAtTier: t => this.startRun(this.players, undefined, 0, t, true),
     });
   }
 
@@ -706,7 +720,110 @@ class Game {
     else text(c, `TOTAL SOULS: ${this.meta.souls}  ·  SPEND THEM IN THE SOUL SHOP`, VW / 2, 660, 8, '#8f86c9', 'center', 0);
     const wait = info.unlocked !== null ? 2 : 1;
     if (this.sceneT > wait) text(c, 'PRESS ENTER / (A)', VW / 2, 740, 10, Math.floor(this.r.time * 2) % 2 ? '#fff' : '#5a5290', 'center', 0);
-    if (this.sceneT > wait && (this.input.confirm() || this.input.back())) { this.audio.ui('select'); this.go('title'); }
+    if (this.sceneT > wait && (this.input.confirm() || this.input.back())) {
+      this.audio.ui('select');
+      const solo = this.players.length === 1 && this.players[0].device === 'solo';
+      if (solo && !run.cheated && qualifiesForHighScore(this.meta.highScores, run.score)) this.startNameEntry();
+      else this.go('title');
+    }
+  }
+
+  startNameEntry() {
+    this.nameDraft = this.meta.lastPlayerName || 'PLAYER';
+    this.nameCursor = 0;
+    this.nameTyped = false;
+    this.go('nameEntry');
+    this.input.suspended = true;
+  }
+
+  nameKey(e: KeyboardEvent) {
+    if (this.scene !== 'nameEntry') return;
+    e.preventDefault();
+    if (e.key === 'Enter') { if (!e.repeat) this.submitName(); return; }
+    if (e.key === 'Escape') { this.input.suspended = false; this.go('title'); return; }
+    if (e.key === 'Backspace') {
+      this.nameDraft = this.nameDraft.slice(0, -1);
+      this.nameCursor = Math.max(0, this.nameDraft.length - 1);
+      this.nameTyped = true;
+      return;
+    }
+    if (!/^[a-z0-9 ]$/i.test(e.key)) return;
+    if (!this.nameTyped) { this.nameDraft = ''; this.nameTyped = true; }
+    if (this.nameDraft.length < 12) this.nameDraft += e.key.toUpperCase();
+    this.nameCursor = Math.max(0, this.nameDraft.length - 1);
+  }
+
+  submitName() {
+    const run = this.run!;
+    if (submitHighScore(this.meta, this.nameDraft, run.score, run.tier, run.heatPoints, !!run.won)) saveMeta(this.meta);
+    this.input.suspended = false;
+    this.audio.ui('select');
+    this.go('highscores');
+  }
+
+  nameEntry() {
+    const c = this.r.ctx, run = this.run!;
+    const dir = this.input.menuDirEdge;
+    if (dir === LEFT) this.nameCursor = Math.max(0, this.nameCursor - 1);
+    if (dir === RIGHT) {
+      if (!this.nameDraft) this.nameDraft = 'A';
+      else {
+        if (this.nameCursor === this.nameDraft.length - 1 && this.nameDraft.length < 12) this.nameDraft += 'A';
+        this.nameCursor = Math.min(this.nameDraft.length - 1, this.nameCursor + 1);
+      }
+    }
+    if (dir === UP || dir === DOWN) {
+      if (!this.nameDraft) this.nameDraft = 'A';
+      const old = NAME_CHARS.indexOf(this.nameDraft[this.nameCursor] ?? 'A');
+      const next = (old + (dir === DOWN ? 1 : NAME_CHARS.length - 1)) % NAME_CHARS.length;
+      this.nameDraft = this.nameDraft.slice(0, this.nameCursor) + NAME_CHARS[next] + this.nameDraft.slice(this.nameCursor + 1);
+      this.nameTyped = true;
+    }
+    if (this.input.back()) {
+      if (!this.nameDraft) { this.input.suspended = false; this.go('title'); return; }
+      this.nameDraft = this.nameDraft.slice(0, this.nameCursor) + this.nameDraft.slice(this.nameCursor + 1);
+      this.nameCursor = Math.max(0, Math.min(this.nameCursor, this.nameDraft.length - 1));
+      this.nameTyped = true;
+    }
+    if (this.input.confirm()) { this.submitName(); return; }
+
+    text(c, 'HIGH SCORE!', VW / 2, 120, 28, '#ffe600', 'center', 18);
+    text(c, `SCORE ${run.score}`, VW / 2, 190, 14, '#fff', 'center', 8);
+    text(c, 'ENTER YOUR NAME', VW / 2, 280, 12, '#5ce1ff', 'center', 6);
+    panel(c, 78, 315, VW - 156, 105, '#b45cff');
+    const slot = 34, start = VW / 2 - 6 * slot + slot / 2;
+    for (let i = 0; i < 12; i++) {
+      const x = start + i * slot;
+      const selected = i === this.nameCursor;
+      if (selected) panel(c, x - 14, 344, 28, 42, '#ffe600', 'rgba(60,35,65,0.9)');
+      text(c, this.nameDraft[i] || '·', x, 370, 12, selected ? '#fff' : '#8fa0ff', 'center', selected ? 8 : 0);
+    }
+    text(c, 'TYPE A NAME  ·  ENTER TO SAVE  ·  ESC TO SKIP', VW / 2, 500, 8, '#8f86c9', 'center', 0);
+    text(c, 'GAMEPAD: ◀ ▶ POSITION  ·  ▲ ▼ LETTER  ·  (A) SAVE  ·  (B) DELETE', VW / 2, 540, 6, '#8f86c9', 'center', 0);
+  }
+
+  highScores() {
+    const c = this.r.ctx;
+    text(c, 'HIGH SCORES', VW / 2, 95, 26, '#ffe600', 'center', 16);
+    text(c, 'SOLO RUN · LOCAL', VW / 2, 130, 9, '#5ce1ff', 'center', 5);
+    panel(c, 48, 165, VW - 96, 560, '#b45cff');
+    text(c, '#', 76, 202, 9, '#8fa0ff', 'left', 0);
+    text(c, 'NAME', 120, 202, 9, '#8fa0ff', 'left', 0);
+    text(c, 'SCORE', 420, 202, 9, '#8fa0ff', 'right', 0);
+    text(c, 'TIER', 515, 202, 9, '#8fa0ff', 'right', 0);
+    text(c, 'HEAT', 620, 202, 9, '#8fa0ff', 'right', 0);
+    if (!this.meta.highScores.length) text(c, 'NO SCORES YET', VW / 2, 440, 14, '#8f86c9', 'center', 0);
+    this.meta.highScores.forEach((entry, i) => {
+      const y = 248 + i * 46;
+      const color = i === 0 ? '#ffe600' : '#fff';
+      text(c, String(i + 1), 76, y, 10, color, 'left', i === 0 ? 6 : 0);
+      text(c, entry.name, 120, y, 10, color, 'left', i === 0 ? 6 : 0);
+      text(c, String(entry.score), 420, y, 10, color, 'right', i === 0 ? 6 : 0);
+      text(c, entry.tier === null ? '—' : `R${entry.tier}`, 515, y, 10, color, 'right', 0);
+      text(c, entry.heat === null ? '—' : String(entry.heat), 620, y, 10, color, 'right', 0);
+    });
+    text(c, 'ESC / (B) / ENTER / (A): TITLE', VW / 2, 785, 8, '#8f86c9', 'center', 0);
+    if (this.input.back() || this.input.confirm()) { this.audio.ui('back'); this.go('title'); }
   }
 
   versusResults() {

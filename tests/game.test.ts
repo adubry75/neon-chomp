@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Run, actPips } from '../src/game/run';
-import { defaultMeta, migrateMeta, newTierWaiting, recordWin } from '../src/game/meta';
+import { defaultMeta, migrateMeta, newTierWaiting, qualifiesForHighScore, recordWin, submitHighScore } from '../src/game/meta';
 import { runCheat, type CheatCtx } from '../src/game/cheats';
 import { MAX_TIER, TIERS, gagFor, tierLabel, tierSouls, twistsFor } from '../src/data/tiers';
 
@@ -112,7 +112,7 @@ describe('tiers', () => {
   });
 });
 
-describe('save v2', () => {
+describe('save migration', () => {
   const v1 = (wins: number) => ({
     v: 1, souls: 50, best: 9000, runs: 8, wins, bossesBeaten: 4,
     unlockedFruits: ['banana'], perks: { start_lives: 1 }, skin: '#5cffc8',
@@ -120,7 +120,7 @@ describe('save v2', () => {
   });
   it('migrates a v1 save with a win to R1 unlocked, keeping everything else', () => {
     const m = migrateMeta(v1(1) as never);
-    expect(m.v).toBe(2);
+    expect(m.v).toBe(3);
     expect(m.tierUnlocked).toBe(1);
     expect(m.tierWins).toEqual([0, 0, 0, 0, 0, 0]);
     expect(m.heatBest).toBe(0);
@@ -155,6 +155,45 @@ describe('save v2', () => {
     expect(recordWin(m, 5)).toBe(null);
     expect(m.tierUnlocked).toBe(5);
     expect(m.tierWins[5]).toBe(1);
+  });
+});
+
+describe('high score save migration', () => {
+  it('keeps the previous best score visible when upgrading a v2 save', () => {
+    const old = { ...defaultMeta(), v: 2, best: 12345 };
+    const migrated = migrateMeta(old);
+    expect(migrated.highScores).toEqual([
+      { name: 'LEGACY', score: 12345, tier: null, heat: null, won: null },
+    ]);
+    expect(migrated.best).toBe(12345);
+  });
+});
+
+describe('local high scores', () => {
+  it('accepts a positive score until the table is full, then requires beating tenth place', () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({ score: 1000 - i * 100 }));
+    expect(qualifiesForHighScore([], 1)).toBe(true);
+    expect(qualifiesForHighScore([], 0)).toBe(false);
+    expect(qualifiesForHighScore(entries, 101)).toBe(true);
+    expect(qualifiesForHighScore(entries, 100)).toBe(false);
+  });
+
+  it('saves a cleaned player name and keeps the ten highest scores in order', () => {
+    const save = defaultMeta();
+    save.highScores = Array.from({ length: 10 }, (_, i) => ({ name: `P${i}`, score: 1000 - i * 100, tier: 0, heat: 0, won: false }));
+    expect(submitHighScore(save, '  aLi  ce!  ', 550, 3, 2, true)).toBe(true);
+    expect(save.highScores[5]).toEqual({ name: 'ALI CE', score: 550, tier: 3, heat: 2, won: true });
+    expect(save.highScores).toHaveLength(10);
+    expect(save.highScores.at(-1)?.score).toBe(200);
+    expect(save.lastPlayerName).toBe('ALI CE');
+  });
+
+  it('does not overwrite the table for a non-qualifying score', () => {
+    const save = defaultMeta();
+    save.highScores = Array.from({ length: 10 }, (_, i) => ({ name: `P${i}`, score: 1000 - i * 100, tier: 0, heat: 0, won: false }));
+    expect(submitHighScore(save, 'PLAYER', 100, 0, 0, false)).toBe(false);
+    expect(save.highScores.at(-1)?.score).toBe(100);
+    expect(save.lastPlayerName).toBe('');
   });
 });
 

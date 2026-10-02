@@ -17,3 +17,4 @@
 - **Heat skins at 4 / 8 / 11** instead of 5 / 10 / 15, because the full rule set adds up to 11.
 - **The Null** (Act IV boss): eat 4 key shards to expose it for 6s, then touch it. Each hit regenerates the maze with a new seed (deterministic via the world RNG).
 - **Ghost memory** targets: Pinky goes to the learned junction nearest Pac and Clyde to the second nearest, only in chase mode and only when Pac is within 8 tiles. Learned spots are marked in red, so an ambush is never invisible.
+- **Local high scores first:** a ten-entry Solo Run table lives in the existing versioned save. Old saves keep their previous best as a `LEGACY` entry because no player name or tier was recorded. Debug URL runs are marked cheated so they cannot write progression or high scores.
